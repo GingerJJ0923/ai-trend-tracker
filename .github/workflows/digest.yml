@@ -1,0 +1,60 @@
+name: Generate AI trend digest
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:30 Asia/Shanghai (UTC+8)
+    - cron: "30 0 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-trend-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+      - name: Generate digest
+        env:
+          PYTHONPATH: src
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CHAT_API_KEY: ${{ secrets.CHAT_API_KEY }}
+          CHAT_BASE_URL: ${{ vars.CHAT_BASE_URL }}
+          EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+          EMBEDDING_BASE_URL: ${{ vars.EMBEDDING_BASE_URL }}
+          EMBEDDING_MODEL: ${{ vars.EMBEDDING_MODEL }}
+          EMBEDDING_DIMENSIONS: ${{ vars.EMBEDDING_DIMENSIONS }}
+          RANKING_MODEL: ${{ vars.RANKING_MODEL }}
+          ANALYSIS_MODEL: ${{ vars.ANALYSIS_MODEL }}
+          # Backward compatibility for existing OpenAI-only deployments.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRACKS_JSON: ${{ secrets.TRACKS_JSON }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
+          DIGEST_TO: ${{ secrets.DIGEST_TO }}
+          LOOKBACK_HOURS: "30"
+        run: python -m trend_tracker digest
+      - name: Upload digest
+        # Disabled by default. In a public repository, uploaded artifacts can be
+        # downloaded by signed-in users with repository read access.
+        if: vars.UPLOAD_REPORT_ARTIFACT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trend-digest-${{ github.run_id }}
+          path: reports/*.md
+          retention-days: 30

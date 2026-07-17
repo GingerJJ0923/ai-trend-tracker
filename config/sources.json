@@ -1,0 +1,47 @@
+[
+  {
+    "type": "rss",
+    "key": "producthunt",
+    "name": "Product Hunt",
+    "url": "https://www.producthunt.com/feed",
+    "max_items": 100
+  },
+  {
+    "type": "hackernews",
+    "key": "hackernews",
+    "name": "Hacker News"
+  },
+  {
+    "type": "github",
+    "key": "github",
+    "name": "GitHub",
+    "queries": [
+      "topic:artificial-intelligence",
+      "topic:llm",
+      "topic:ai-agent"
+    ],
+    "per_query": 40
+  },
+  {
+    "type": "huggingface",
+    "key": "huggingface-models",
+    "name": "Hugging Face Models",
+    "kind": "models",
+    "limit": 100
+  },
+  {
+    "type": "huggingface",
+    "key": "huggingface-spaces",
+    "name": "Hugging Face Spaces",
+    "kind": "spaces",
+    "limit": 100
+  },
+  {
+    "type": "arxiv",
+    "key": "arxiv-ai",
+    "name": "arXiv AI",
+    "query": "cat:cs.AI OR cat:cs.CL OR cat:cs.LG OR cat:cs.HC",
+    "limit": 150
+  }
+]
+
