@@ -45,10 +45,6 @@ jobs:
             echo "::error::Missing Actions secret: DIGEST_TO"
             exit 1
           fi
-          if [ -z "$SERVERCHAN_SENDKEY" ]; then
-            echo "::error::Missing Actions secret: SERVERCHAN_SENDKEY"
-            exit 1
-          fi
       - name: Refresh sources before digest
         env:
           PYTHONPATH: src
@@ -86,6 +82,9 @@ jobs:
           DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}
           LOOKBACK_HOURS: "30"
+          OUTPUT_LANGUAGE: "zh-CN"
+          REPORT_TIMEZONE: "Asia/Shanghai"
+          REPORT_TOP_ITEMS: "5"
         run: python -m trend_tracker digest
       - name: Upload digest
         # Disabled by default. In a public repository, uploaded artifacts can be

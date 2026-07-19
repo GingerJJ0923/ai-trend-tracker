@@ -92,7 +92,7 @@ The code can live in a public repository. Store the following under
 | `RESEND_API_KEY` | optional | Resend fallback when SMTP is not configured |
 | `DIGEST_FROM` | delivery | Sender address; for QQ SMTP this can equal `SMTP_USERNAME` |
 | `DIGEST_TO` | delivery | Comma/semicolon-separated recipients, such as QQ and work email |
-| `SERVERCHAN_SENDKEY` | delivery | ServerChan SendKey for WeChat delivery |
+| `SERVERCHAN_SENDKEY` | optional | ServerChan SendKey when WeChat delivery is desired |
 | `OPENAI_API_KEY` | no | Legacy OpenAI-only fallback |
 
 ### Repository variables
@@ -110,11 +110,14 @@ Variables are not secrets; they only select endpoints and models.
 | `SMTP_HOST` | `smtp.qq.com` (also the code default) |
 | `SMTP_PORT` | `465` (also the code default) |
 | `UPLOAD_REPORT_ARTIFACT` | leave unset or `false` in public repositories |
+| `OUTPUT_LANGUAGE` | `zh-CN` |
+| `REPORT_TIMEZONE` | `Asia/Shanghai` |
+| `REPORT_TOP_ITEMS` | `5` |
 
 Example private `TRACKS_JSON`:
 
 ```json
-[{"name":"AI workflow","goal":"Track practical AI products that improve knowledge work and software workflows. Prefer products that can be tested now; exclude generic wrappers."}]
+[{"name":"AI 工作流","goal":"关注能够改善知识工作和软件工作流、现在即可测试的 AI 产品；排除缺少差异化能力的简单套壳产品。"}]
 ```
 
 ### Provider examples
@@ -154,9 +157,10 @@ model IDs in the provider console rather than editing source code.
 
 Run **Collect AI signals** once before **Generate AI trend digest**.
 
-Scheduled digest delivery requires `DIGEST_TO`, `SERVERCHAN_SENDKEY`, and one
-email provider. The free default is QQ SMTP through `SMTP_USERNAME` and
-`SMTP_PASSWORD`; Resend remains an optional fallback. Put the QQ and work
+Scheduled email delivery requires `DIGEST_TO` and one email provider. The free
+default is QQ SMTP through `SMTP_USERNAME` and `SMTP_PASSWORD`; Resend remains
+an optional fallback. `SERVERCHAN_SENDKEY` is optional and can be omitted when
+you do not want public-account-based WeChat delivery. Put the QQ and work
 addresses together in `DIGEST_TO`, for example
 `name@qq.com,name@company.com`. The workflow fails clearly when a delivery
 secret is missing instead of silently generating a database-only report.

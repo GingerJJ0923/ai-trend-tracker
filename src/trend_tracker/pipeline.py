@@ -25,6 +25,7 @@ def make_services(settings: Settings):
         ranking_model=settings.ranking_model,
         analysis_model=settings.analysis_model,
         http=http,
+        output_language=settings.output_language,
     )
     return http, repository, ai
 
@@ -145,14 +146,22 @@ def digest(settings: Settings) -> str:
 
     repository.upsert_matches(db_match_records)
     generated_at = datetime.now(timezone.utc)
-    report = build_report(generated_at, len(items), tracks, matches_by_track, trends_by_track)
+    report = build_report(
+        generated_at,
+        len(items),
+        tracks,
+        matches_by_track,
+        trends_by_track,
+        top_items=settings.report_top_items,
+        timezone_name=settings.report_timezone,
+    )
     path = write_report(report)
     repository.save_digest(
         generated_at,
         report,
         {"scanned_count": len(items), "track_count": len(tracks)},
     )
-    subject = "AI Trend Tracker — {0}".format(generated_at.strftime("%Y-%m-%d"))
+    subject = "AI 趋势日报｜{0}".format(generated_at.strftime("%Y-%m-%d"))
     if settings.smtp_username and settings.smtp_password:
         send_smtp_email(
             settings.smtp_host,

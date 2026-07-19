@@ -72,6 +72,9 @@ class Settings:
     ranking_model: str
     analysis_model: str
     tracks_json: str
+    output_language: str
+    report_timezone: str
+    report_top_items: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -118,6 +121,9 @@ class Settings:
             ranking_model=ranking_model,
             analysis_model=analysis_model,
             tracks_json=os.environ.get("TRACKS_JSON", "[]"),
+            output_language=os.environ.get("OUTPUT_LANGUAGE", "zh-CN"),
+            report_timezone=os.environ.get("REPORT_TIMEZONE", "Asia/Shanghai"),
+            report_top_items=max(1, env_int("REPORT_TOP_ITEMS", 5)),
         )
 
     def require_supabase(self) -> None:

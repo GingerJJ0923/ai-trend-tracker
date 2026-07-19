@@ -7,6 +7,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Dict, List
+from zoneinfo import ZoneInfo
 
 from .http import HttpClient
 from .models import MatchResult, Track
@@ -18,52 +19,99 @@ def build_report(
     tracks: List[Track],
     matches_by_track: Dict[str, List[MatchResult]],
     trends_by_track: Dict[str, str],
+    top_items: int = 5,
+    timezone_name: str = "Asia/Shanghai",
 ) -> str:
+    try:
+        local_time = generated_at.astimezone(ZoneInfo(timezone_name))
+    except (KeyError, ValueError):
+        local_time = generated_at
+    weekdays = "一二三四五六日"
+    date_label = "{0}年{1}月{2}日 星期{3}".format(
+        local_time.year,
+        local_time.month,
+        local_time.day,
+        weekdays[local_time.weekday()],
+    )
+    relevant_by_track = {
+        track.id: [match for match in matches_by_track.get(track.id, []) if match.score >= 50]
+        for track in tracks
+    }
+    all_relevant = [match for track in tracks for match in relevant_by_track[track.id]]
+    analysis_count = sum(1 for match in all_relevant if match.analysis)
+    featured = max(all_relevant, key=lambda match: match.score) if all_relevant else None
+
     lines = [
-        "# AI Trend Tracker — {0}".format(generated_at.strftime("%Y-%m-%d")),
+        "# AI 趋势日报｜{0}".format(date_label),
         "",
-        "Generated at {0}. Scanned **{1}** deduplicated observations.".format(generated_at.isoformat(), scanned_count),
+        "> 今日扫描 **{0}** 条信息 · 精选 **{1}** 条 · 深度分析 **{2}** 条".format(
+            scanned_count,
+            min(len(all_relevant), top_items * max(1, len(tracks))),
+            analysis_count,
+        ),
+        "",
+        "## 30 秒结论",
         "",
     ]
+    if featured:
+        title = featured.display_title or featured.item.title
+        lines.extend(
+            [
+                "- **今天最值得关注：** {0}（相关度 {1:.0f}）".format(title, featured.score),
+                "- **与你的关系：** {0}".format(featured.reason or "与当前关注目标具有较高相关性。"),
+                "- **建议动作：** {0}".format(featured.next_action or "先阅读原始资料，再决定是否投入进一步测试。"),
+                "",
+            ]
+        )
+    else:
+        lines.extend(["本次采集没有信息达到相关性门槛，建议暂不行动，等待下一轮信号。", ""])
+
     for track in tracks:
-        matches = matches_by_track.get(track.id, [])
-        relevant = [match for match in matches if match.score >= 50]
+        relevant = relevant_by_track[track.id]
         high = [match for match in relevant if match.score >= 80]
         lines.extend(
             [
-                "## Track: {0}".format(track.name),
+                "## 今日重点情报｜{0}".format(track.name),
                 "",
-                "> {0}".format(track.goal.replace("\n", " ")),
-                "",
-                "Found **{0}** possible matches, including **{1}** high-relevance signals.".format(len(relevant), len(high)),
-                "",
-                "### Trend synthesis",
-                "",
-                trends_by_track.get(track.id, "No trend synthesis generated."),
-                "",
-                "### Ranked signals",
+                "发现 **{0}** 条相关信息，其中 **{1}** 条为高度相关；以下展示最值得阅读的 {2} 条。".format(
+                    len(relevant), len(high), min(len(relevant), top_items)
+                ),
                 "",
             ]
         )
         if not relevant:
-            lines.extend(["No item crossed the relevance threshold.", ""])
+            lines.extend(["暂时没有信息达到相关性门槛。", ""])
             continue
-        for index, match in enumerate(relevant[:15], 1):
+        for index, match in enumerate(relevant[:top_items], 1):
             target = match.item.product_url or match.item.url
+            title = match.display_title or match.item.title
+            tier = "高度相关" if match.score >= 80 else "值得关注"
+            published = match.item.published_at.astimezone(local_time.tzinfo)
             lines.extend(
                 [
-                    "#### {0}. [{1}]({2}) — {3:.0f}/100".format(index, match.item.title, target, match.score),
+                    "### {0}. [{1}]({2})｜{3:.0f} · {4}".format(index, title, target, match.score, tier),
                     "",
-                    "- Source: `{0}` · Published: {1}".format(match.item.source_key, match.item.published_at.strftime("%Y-%m-%d %H:%M UTC")),
-                    "- Why it matches: {0}".format(match.reason or "No reason supplied."),
-                    "- Original evidence: [{0}]({1})".format(match.item.url, match.item.url),
+                    "- **是什么：** {0}".format(match.concise_summary or "请查看原始页面了解产品或技术详情。"),
+                    "- **为什么值得看：** {0}".format(match.reason or "与当前关注目标具有直接关联。"),
+                    "- **建议动作：** {0}".format(match.next_action or "先用一个真实的小任务验证效果。"),
+                    "- **来源与时间：** `{0}` · {1}".format(match.item.source_key, published.strftime("%m月%d日 %H:%M")),
+                    "- **原始证据：** [查看来源]({0})".format(match.item.url),
                 ]
             )
-            if match.item.summary:
-                lines.append("- Summary: {0}".format(match.item.summary[:600]))
             if match.analysis:
-                lines.extend(["", "**Deep analysis**", "", match.analysis])
+                lines.extend(["", "**深度分析**", "", match.analysis])
             lines.append("")
+
+    lines.extend(["## 趋势雷达", ""])
+    for track in tracks:
+        lines.extend(
+            [
+                "### {0}".format(track.name),
+                "",
+                trends_by_track.get(track.id, "暂未生成趋势研判。"),
+                "",
+            ]
+        )
     return "\n".join(lines).strip() + "\n"
 
 
@@ -79,12 +127,66 @@ def email_recipients(value: str) -> List[str]:
     return [row.strip() for row in re.split(r"[,;\n]+", value or "") if row.strip()]
 
 
+def _inline_markdown(value: str) -> str:
+    parts = []
+    position = 0
+    pattern = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+    for match in pattern.finditer(value):
+        parts.append(html.escape(value[position : match.start()]))
+        label = html.escape(match.group(1))
+        url = html.escape(match.group(2), quote=True)
+        parts.append('<a href="{0}">{1}</a>'.format(url, label))
+        position = match.end()
+    parts.append(html.escape(value[position:]))
+    rendered = "".join(parts)
+    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", rendered)
+
+
+def markdown_email_html(report: str) -> str:
+    """Render the digest's small Markdown subset as a readable email."""
+    blocks = []
+    list_open = False
+    for raw_line in report.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- "):
+            if not list_open:
+                blocks.append("<ul>")
+                list_open = True
+            blocks.append("<li>{0}</li>".format(_inline_markdown(line[2:])))
+            continue
+        if list_open:
+            blocks.append("</ul>")
+            list_open = False
+        if not line:
+            continue
+        if line.startswith("# "):
+            blocks.append("<h1>{0}</h1>".format(_inline_markdown(line[2:])))
+        elif line.startswith("## "):
+            blocks.append("<h2>{0}</h2>".format(_inline_markdown(line[3:])))
+        elif line.startswith("### "):
+            blocks.append("<h3>{0}</h3>".format(_inline_markdown(line[4:])))
+        elif line.startswith("> "):
+            blocks.append("<div class=\"meta\">{0}</div>".format(_inline_markdown(line[2:])))
+        else:
+            blocks.append("<p>{0}</p>".format(_inline_markdown(line)))
+    if list_open:
+        blocks.append("</ul>")
+    content = "\n".join(blocks)
+    return """<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;background:#f4f6f8;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.65}
+.wrap{max-width:720px;margin:0 auto;padding:28px 18px}.paper{background:#fff;border:1px solid #e8ebf0;border-radius:16px;padding:30px;box-shadow:0 8px 30px rgba(28,39,60,.06)}
+h1{font-size:27px;line-height:1.3;margin:0 0 14px;color:#101828}h2{font-size:20px;margin:32px 0 14px;padding-top:22px;border-top:1px solid #edf0f4;color:#15213a}h3{font-size:17px;margin:24px 0 10px;color:#243b67}
+p{margin:8px 0}.meta{margin:12px 0 18px;padding:12px 15px;border-radius:10px;background:#f0f5ff;color:#3c4e72}ul{margin:8px 0 14px;padding-left:22px}li{margin:7px 0}
+a{color:#2457d6;text-decoration:none;font-weight:600}strong{color:#101828}@media(max-width:600px){.wrap{padding:0}.paper{border-radius:0;border:0;padding:22px 18px}}
+</style></head><body><div class="wrap"><div class="paper">__DIGEST_CONTENT__</div></div></body></html>""".replace("__DIGEST_CONTENT__", content)
+
+
 def send_email(http: HttpClient, api_key: str, sender: str, recipient: str, subject: str, report: str) -> None:
     recipients = email_recipients(recipient)
     if not (api_key and sender and recipients):
         return
-    escaped = html.escape(report)
-    body = "<html><body><pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{0}</pre></body></html>".format(escaped)
+    body = markdown_email_html(report)
     response = http.post_json(
         "https://api.resend.com/emails",
         {"from": sender, "to": recipients, "subject": subject, "html": body},
@@ -111,9 +213,8 @@ def send_smtp_email(
     message["To"] = ", ".join(recipients)
     message["Subject"] = subject
     message.set_content(report)
-    escaped = html.escape(report)
     message.add_alternative(
-        "<html><body><pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{0}</pre></body></html>".format(escaped),
+        markdown_email_html(report),
         subtype="html",
     )
     context = ssl.create_default_context()

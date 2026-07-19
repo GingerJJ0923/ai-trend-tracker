@@ -48,4 +48,6 @@ class MatchResult:
     reason: str
     item: SourceItem
     analysis: str = ""
-
+    display_title: str = ""
+    concise_summary: str = ""
+    next_action: str = ""

@@ -13,7 +13,7 @@ from trend_tracker.config import Settings, supabase_key_role
 from trend_tracker.http import HttpClient
 from trend_tracker.models import MatchResult, SourceItem, Track
 from trend_tracker.pipeline import deduplicate_observations
-from trend_tracker.report import build_report, email_recipients, send_email, send_smtp_email, send_wechat
+from trend_tracker.report import build_report, email_recipients, markdown_email_html, send_email, send_smtp_email, send_wechat
 from trend_tracker.repository import SupabaseRepository
 from trend_tracker.utils import canonical_url, clean_text, cosine_similarity, item_fingerprint, parse_datetime
 
@@ -73,7 +73,30 @@ class PipelineTests(unittest.TestCase):
         report = build_report(datetime.now(timezone.utc), 10, [track], {"t": [match]}, {"t": "Agent tools are becoming more actionable."})
         self.assertIn("Directly relevant", report)
         self.assertIn("https://example.com/tool", report)
-        self.assertIn("Deep analysis", report)
+        self.assertIn("深度分析", report)
+        self.assertIn("30 秒结论", report)
+        self.assertIn("趋势雷达", report)
+        self.assertNotIn("Why it matches", report)
+
+    def test_report_limits_each_track_to_top_items(self):
+        track = Track(id="t", name="智能体", goal="关注可落地的智能体产品")
+        matches = []
+        for index in range(7):
+            item = self.make_item("ph", str(index), "https://example.com/{0}".format(index), "产品 {0}".format(index))
+            matches.append(
+                MatchResult(
+                    "t", str(index), 90 - index, 0.7, "high", "与目标直接相关", item,
+                    display_title="产品 {0}".format(index),
+                    concise_summary="用于改善工作流",
+                    next_action="用一个任务进行测试",
+                )
+            )
+        report = build_report(
+            datetime.now(timezone.utc), 20, [track], {"t": matches},
+            {"t": "**趋势判断：** 智能体正在走向落地。"}, top_items=5,
+        )
+        self.assertIn("产品 4", report)
+        self.assertNotIn("产品 5", report)
 
 
 class FakeHttp(HttpClient):
@@ -258,6 +281,18 @@ class DeliveryHttp:
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_markdown_links_are_clickable_in_email_html(self):
+        rendered = markdown_email_html("Read [Product](https://example.com/tool?a=1&b=2)")
+        self.assertIn('<a href="https://example.com/tool?a=1&amp;b=2"', rendered)
+        self.assertIn(">Product</a>", rendered)
+
+    def test_email_html_renders_digest_structure(self):
+        rendered = markdown_email_html("# AI 趋势日报\n\n## 30 秒结论\n\n- **建议动作：** 立即测试")
+        self.assertIn("<h1>AI 趋势日报</h1>", rendered)
+        self.assertIn("<h2>30 秒结论</h2>", rendered)
+        self.assertIn("<strong>建议动作：</strong>", rendered)
+        self.assertNotIn("<pre", rendered)
+
     def test_splits_multiple_email_recipients(self):
         self.assertEqual(
             email_recipients("personal@qq.com; work@example.com,third@example.com"),
