@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import tempfile
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from trend_tracker.ai import AIService, candidate_scores
 from trend_tracker.connectors import collect_rss
-from trend_tracker.config import Settings
+from trend_tracker.config import Settings, supabase_key_role
 from trend_tracker.http import HttpClient
 from trend_tracker.models import MatchResult, SourceItem, Track
 from trend_tracker.pipeline import deduplicate_observations
@@ -102,6 +103,26 @@ class ConnectorTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_detects_new_supabase_key_roles(self):
+        self.assertEqual(supabase_key_role("sb_secret_example"), "service_role")
+        self.assertEqual(supabase_key_role("sb_publishable_example"), "anon")
+
+    def test_detects_legacy_anon_jwt(self):
+        payload = base64.urlsafe_b64encode(json.dumps({"role": "anon"}).encode("utf-8")).decode("ascii").rstrip("=")
+        self.assertEqual(supabase_key_role("e30.{0}.signature".format(payload)), "anon")
+
+    def test_rejects_publishable_key_as_server_secret(self):
+        old = os.environ.copy()
+        try:
+            os.environ["SUPABASE_URL"] = "https://project.supabase.co"
+            os.environ["SUPABASE_SECRET_KEY"] = "sb_publishable_example"
+            settings = Settings.from_env()
+            with self.assertRaisesRegex(RuntimeError, "anon/publishable"):
+                settings.require_supabase()
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
     def test_source_config_loads(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sources.json"

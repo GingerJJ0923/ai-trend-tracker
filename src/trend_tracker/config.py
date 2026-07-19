@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from dataclasses import dataclass
@@ -24,6 +25,24 @@ def env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, str(default)))
     except ValueError:
         return default
+
+
+def supabase_key_role(key: str) -> str:
+    """Return the privilege type encoded by a Supabase API key."""
+    if key.startswith("sb_secret_"):
+        return "service_role"
+    if key.startswith("sb_publishable_"):
+        return "anon"
+    parts = key.split(".")
+    if len(parts) != 3:
+        return "unknown"
+    try:
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        decoded = base64.urlsafe_b64decode(payload.encode("ascii"))
+        data = json.loads(decoded.decode("utf-8"))
+    except (ValueError, UnicodeError, json.JSONDecodeError):
+        return "unknown"
+    return str(data.get("role") or "unknown")
 
 
 @dataclass
@@ -99,6 +118,17 @@ class Settings:
             missing.append("SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY)")
         if missing:
             raise RuntimeError("Missing required settings: " + ", ".join(missing))
+        role = supabase_key_role(self.supabase_key)
+        if role != "service_role":
+            if role == "anon":
+                raise RuntimeError(
+                    "SUPABASE_SECRET_KEY contains an anon/publishable key. "
+                    "Use a server-side sb_secret_* key or the legacy service_role key."
+                )
+            raise RuntimeError(
+                "SUPABASE_SECRET_KEY is not a recognized server-side key. "
+                "Use a server-side sb_secret_* key or the legacy service_role key."
+            )
 
     def sources(self) -> List[Dict[str, Any]]:
         path = Path(self.source_config)
