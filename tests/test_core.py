@@ -12,6 +12,7 @@ from trend_tracker.http import HttpClient
 from trend_tracker.models import MatchResult, SourceItem, Track
 from trend_tracker.pipeline import deduplicate_observations
 from trend_tracker.report import build_report
+from trend_tracker.repository import SupabaseRepository
 from trend_tracker.utils import canonical_url, clean_text, cosine_similarity, item_fingerprint, parse_datetime
 
 
@@ -169,6 +170,17 @@ class ConfigTests(unittest.TestCase):
         finally:
             os.environ.clear()
             os.environ.update(old)
+
+
+class RepositoryTests(unittest.TestCase):
+    def test_new_supabase_secret_key_is_not_sent_as_bearer_jwt(self):
+        repository = SupabaseRepository("https://project.supabase.co", "sb_secret_example")
+        self.assertEqual(repository.headers["apikey"], "sb_secret_example")
+        self.assertNotIn("Authorization", repository.headers)
+
+    def test_legacy_service_role_jwt_is_sent_as_bearer(self):
+        repository = SupabaseRepository("https://project.supabase.co", "legacy.jwt.value")
+        self.assertEqual(repository.headers["Authorization"], "Bearer legacy.jwt.value")
 
 
 class RecordingHttp:

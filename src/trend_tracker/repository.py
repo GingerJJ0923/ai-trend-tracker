@@ -15,9 +15,13 @@ class SupabaseRepository:
         self.http = http or HttpClient()
         self.headers = {
             "apikey": key,
-            "Authorization": "Bearer {0}".format(key),
             "Content-Type": "application/json",
         }
+        # Supabase's new sb_secret_* keys are opaque API keys, not JWTs. The
+        # gateway derives the service_role from the apikey header. Legacy
+        # service_role JWTs still need to be sent as a Bearer token.
+        if not key.startswith("sb_secret_"):
+            self.headers["Authorization"] = "Bearer {0}".format(key)
 
     def _rest_url(self, path: str, query: Optional[Dict[str, Any]] = None) -> str:
         url = "{0}/rest/v1/{1}".format(self.url, path.lstrip("/"))

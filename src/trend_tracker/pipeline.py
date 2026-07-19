@@ -61,16 +61,19 @@ def collect(settings: Settings, dry_run: bool = False) -> int:
                 unique[(item.source_key, item.external_id)] = item
             items = list(unique.values())
             total += len(items)
-            successful_sources += 1
             if repository:
                 repository.upsert_items(items)
                 repository.log_fetch(key, "success", len(items))
+            successful_sources += 1
             preview.extend(items[:3])
             print("{0}: collected {1} items".format(key, len(items)))
         except Exception as exc:
             print("{0}: FAILED: {1}".format(key, exc))
             if repository:
-                repository.log_fetch(key, "failed", 0, str(exc))
+                try:
+                    repository.log_fetch(key, "failed", 0, str(exc))
+                except Exception as log_exc:
+                    print("{0}: could not write failure log to Supabase: {1}".format(key, log_exc))
     if dry_run:
         print(json.dumps([{"source": item.source_key, "title": item.title, "url": item.url} for item in preview], ensure_ascii=False, indent=2))
     if successful_sources == 0:
