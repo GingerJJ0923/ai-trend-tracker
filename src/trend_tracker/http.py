@@ -1,6 +1,7 @@
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
 
@@ -27,8 +28,11 @@ class HttpClient:
             merged_headers.update(headers)
         body = None
         if payload is not None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            merged_headers.setdefault("Content-Type", "application/json")
+            if isinstance(payload, (bytes, bytearray)):
+                body = bytes(payload)
+            else:
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                merged_headers.setdefault("Content-Type", "application/json")
 
         for attempt in range(retries + 1):
             request = urllib.request.Request(url, data=body, headers=merged_headers, method=method)
@@ -60,3 +64,10 @@ class HttpClient:
         raw = self.request("POST", url, headers=headers, payload=payload, timeout=60)
         return json.loads(raw.decode("utf-8")) if raw else None
 
+    def post_form(self, url: str, payload: Dict[str, str], headers: Optional[Dict[str, str]] = None) -> Any:
+        merged_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if headers:
+            merged_headers.update(headers)
+        body = urllib.parse.urlencode(payload).encode("utf-8")
+        raw = self.request("POST", url, headers=merged_headers, payload=body, timeout=60)
+        return json.loads(raw.decode("utf-8")) if raw else None

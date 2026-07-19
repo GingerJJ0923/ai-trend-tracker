@@ -3,8 +3,8 @@ name: Generate AI trend digest
 on:
   workflow_dispatch:
   schedule:
-    # 08:30 Asia/Shanghai (UTC+8)
-    - cron: "30 0 * * *"
+    # 08:07 Asia/Shanghai (UTC+8). The non-round minute reduces scheduler delay.
+    - cron: "7 0 * * *"
 
 permissions:
   contents: read
@@ -26,6 +26,39 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -v
+      - name: Validate delivery configuration
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
+          DIGEST_TO: ${{ secrets.DIGEST_TO }}
+        run: |
+          if [ -z "$SMTP_USERNAME" ] || [ -z "$SMTP_PASSWORD" ]; then
+            if [ -z "$RESEND_API_KEY" ] || [ -z "$DIGEST_FROM" ]; then
+              echo "::error::Configure SMTP_USERNAME + SMTP_PASSWORD, or RESEND_API_KEY + DIGEST_FROM"
+              exit 1
+            fi
+          fi
+          if [ -z "$DIGEST_TO" ]; then
+            echo "::error::Missing Actions secret: DIGEST_TO"
+            exit 1
+          fi
+          if [ -z "$SERVERCHAN_SENDKEY" ]; then
+            echo "::error::Missing Actions secret: SERVERCHAN_SENDKEY"
+            exit 1
+          fi
+      - name: Refresh sources before digest
+        env:
+          PYTHONPATH: src
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          LOOKBACK_HOURS: "30"
+          HN_ITEM_LIMIT: "120"
+        run: python -m trend_tracker collect
       - name: Generate digest
         env:
           PYTHONPATH: src
@@ -45,6 +78,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TRACKS_JSON: ${{ secrets.TRACKS_JSON }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}
           LOOKBACK_HOURS: "30"

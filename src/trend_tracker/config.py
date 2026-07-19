@@ -55,6 +55,11 @@ class Settings:
     embedding_base_url: str
     github_token: str
     resend_key: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    serverchan_sendkey: str
     digest_from: str
     digest_to: str
     source_config: str
@@ -96,6 +101,11 @@ class Settings:
             embedding_base_url=(os.environ.get("EMBEDDING_BASE_URL") or legacy_base_url).rstrip("/"),
             github_token=os.environ.get("GITHUB_TOKEN", ""),
             resend_key=os.environ.get("RESEND_API_KEY", ""),
+            smtp_host=os.environ.get("SMTP_HOST") or "smtp.qq.com",
+            smtp_port=env_int("SMTP_PORT", 465),
+            smtp_username=os.environ.get("SMTP_USERNAME", ""),
+            smtp_password=os.environ.get("SMTP_PASSWORD", ""),
+            serverchan_sendkey=os.environ.get("SERVERCHAN_SENDKEY", ""),
             digest_from=os.environ.get("DIGEST_FROM", ""),
             digest_to=os.environ.get("DIGEST_TO", ""),
             source_config=os.environ.get("SOURCE_CONFIG", "config/sources.json"),

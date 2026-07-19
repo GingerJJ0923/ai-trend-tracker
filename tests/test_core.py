@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from trend_tracker.config import Settings, supabase_key_role
 from trend_tracker.http import HttpClient
 from trend_tracker.models import MatchResult, SourceItem, Track
 from trend_tracker.pipeline import deduplicate_observations
-from trend_tracker.report import build_report
+from trend_tracker.report import build_report, email_recipients, send_email, send_smtp_email, send_wechat
 from trend_tracker.repository import SupabaseRepository
 from trend_tracker.utils import canonical_url, clean_text, cosine_similarity, item_fingerprint, parse_datetime
 
@@ -240,6 +241,54 @@ class AIServiceTests(unittest.TestCase):
     def test_parses_fenced_json_from_compatible_provider(self):
         value = AIService._parse_json_content("```json\n{\"analysis\":\"ok\"}\n```")
         self.assertEqual(value["analysis"], "ok")
+
+
+class DeliveryHttp:
+    def __init__(self):
+        self.json_calls = []
+        self.form_calls = []
+
+    def post_json(self, url, payload, headers=None):
+        self.json_calls.append((url, payload, headers))
+        return {"id": "email-id"}
+
+    def post_form(self, url, payload, headers=None):
+        self.form_calls.append((url, payload, headers))
+        return {"code": 0, "data": {"pushid": "wechat-id"}}
+
+
+class DeliveryTests(unittest.TestCase):
+    def test_splits_multiple_email_recipients(self):
+        self.assertEqual(
+            email_recipients("personal@qq.com; work@example.com,third@example.com"),
+            ["personal@qq.com", "work@example.com", "third@example.com"],
+        )
+
+    def test_sends_one_email_to_multiple_recipients(self):
+        http = DeliveryHttp()
+        send_email(http, "re_key", "Digest <digest@example.com>", "personal@qq.com,work@example.com", "Daily", "Report")
+        self.assertEqual(http.json_calls[0][1]["to"], ["personal@qq.com", "work@example.com"])
+
+    def test_sends_markdown_report_to_serverchan(self):
+        http = DeliveryHttp()
+        send_wechat(http, "SCTexample", "Daily", "# Report")
+        self.assertEqual(http.form_calls[0][0], "https://sctapi.ftqq.com/SCTexample.send")
+        self.assertEqual(http.form_calls[0][1]["desp"], "# Report")
+
+    @patch("trend_tracker.report.smtplib.SMTP_SSL")
+    def test_sends_smtp_email_to_multiple_recipients(self, smtp_ssl):
+        server = smtp_ssl.return_value.__enter__.return_value
+        send_smtp_email(
+            "smtp.qq.com",
+            465,
+            "sender@qq.com",
+            "authorization-code",
+            "personal@qq.com,work@example.com",
+            "Daily",
+            "# Report",
+        )
+        server.login.assert_called_once_with("sender@qq.com", "authorization-code")
+        self.assertEqual(server.send_message.call_args.kwargs["to_addrs"], ["personal@qq.com", "work@example.com"])
 
 
 if __name__ == "__main__":

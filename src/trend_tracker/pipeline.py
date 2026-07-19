@@ -7,7 +7,7 @@ from .config import Settings
 from .connectors import collect_source
 from .http import HttpClient
 from .models import MatchResult, SourceItem, Track
-from .report import build_report, send_email, write_report
+from .report import build_report, send_email, send_smtp_email, send_wechat, write_report
 from .repository import SupabaseRepository
 
 
@@ -152,14 +152,27 @@ def digest(settings: Settings) -> str:
         report,
         {"scanned_count": len(items), "track_count": len(tracks)},
     )
-    send_email(
-        http,
-        settings.resend_key,
-        settings.digest_from,
-        settings.digest_to,
-        "AI Trend Tracker — {0}".format(generated_at.strftime("%Y-%m-%d")),
-        report,
-    )
+    subject = "AI Trend Tracker — {0}".format(generated_at.strftime("%Y-%m-%d"))
+    if settings.smtp_username and settings.smtp_password:
+        send_smtp_email(
+            settings.smtp_host,
+            settings.smtp_port,
+            settings.smtp_username,
+            settings.smtp_password,
+            settings.digest_to,
+            subject,
+            report,
+        )
+    else:
+        send_email(
+            http,
+            settings.resend_key,
+            settings.digest_from,
+            settings.digest_to,
+            subject,
+            report,
+        )
+    send_wechat(http, settings.serverchan_sendkey, subject, report)
     cleanup_result = repository.cleanup()
     storage_status = repository.storage_status()
     print("Report written to {0}".format(path))

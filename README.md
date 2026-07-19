@@ -87,9 +87,12 @@ The code can live in a public repository. Store the following under
 | `CHAT_API_KEY` | recommended | DeepSeek, GLM, or another compatible Chat API key |
 | `EMBEDDING_API_KEY` | recommended | Compatible embedding API key; may equal the chat key |
 | `TRACKS_JSON` | recommended | Private JSON array of initial Tracks |
-| `RESEND_API_KEY` | optional | Private email delivery |
-| `DIGEST_FROM` | optional | Verified sender |
-| `DIGEST_TO` | optional | Private recipient address |
+| `SMTP_USERNAME` | delivery | QQ mailbox used to send the digest |
+| `SMTP_PASSWORD` | delivery | QQ Mail SMTP authorization code, not the login password |
+| `RESEND_API_KEY` | optional | Resend fallback when SMTP is not configured |
+| `DIGEST_FROM` | delivery | Sender address; for QQ SMTP this can equal `SMTP_USERNAME` |
+| `DIGEST_TO` | delivery | Comma/semicolon-separated recipients, such as QQ and work email |
+| `SERVERCHAN_SENDKEY` | delivery | ServerChan SendKey for WeChat delivery |
 | `OPENAI_API_KEY` | no | Legacy OpenAI-only fallback |
 
 ### Repository variables
@@ -104,6 +107,8 @@ Variables are not secrets; they only select endpoints and models.
 | `EMBEDDING_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` |
 | `EMBEDDING_MODEL` | `embedding-3` |
 | `EMBEDDING_DIMENSIONS` | `512` |
+| `SMTP_HOST` | `smtp.qq.com` (also the code default) |
+| `SMTP_PORT` | `465` (also the code default) |
 | `UPLOAD_REPORT_ARTIFACT` | leave unset or `false` in public repositories |
 
 Example private `TRACKS_JSON`:
@@ -143,9 +148,18 @@ model IDs in the provider console rather than editing source code.
 ## 3. Enable workflows
 
 - `.github/workflows/collect.yml`: every four hours and manual dispatch
-- `.github/workflows/digest.yml`: daily at 08:30 Asia/Shanghai and manual dispatch
+- `.github/workflows/digest.yml`: daily at 08:07 Asia/Shanghai and manual dispatch;
+  it refreshes sources first, generates the digest, and delivers the same report
+  through QQ SMTP or Resend email and ServerChan WeChat
 
 Run **Collect AI signals** once before **Generate AI trend digest**.
+
+Scheduled digest delivery requires `DIGEST_TO`, `SERVERCHAN_SENDKEY`, and one
+email provider. The free default is QQ SMTP through `SMTP_USERNAME` and
+`SMTP_PASSWORD`; Resend remains an optional fallback. Put the QQ and work
+addresses together in `DIGEST_TO`, for example
+`name@qq.com,name@company.com`. The workflow fails clearly when a delivery
+secret is missing instead of silently generating a database-only report.
 
 Reports are saved in the private Supabase `digests` table. View the latest one:
 
