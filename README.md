@@ -113,6 +113,7 @@ Variables are not secrets; they only select endpoints and models.
 | `OUTPUT_LANGUAGE` | `zh-CN` |
 | `REPORT_TIMEZONE` | `Asia/Shanghai` |
 | `REPORT_TOP_ITEMS` | `5` |
+| `FORCE_DIGEST` | leave `false`; manual recovery only |
 
 Example private `TRACKS_JSON`:
 
@@ -151,9 +152,10 @@ model IDs in the provider console rather than editing source code.
 ## 3. Enable workflows
 
 - `.github/workflows/collect.yml`: every four hours and manual dispatch
-- `.github/workflows/digest.yml`: daily at 08:07 Asia/Shanghai and manual dispatch;
-  it refreshes sources first, generates the digest, and delivers the same report
-  through QQ SMTP or Resend email and ServerChan WeChat
+- `.github/workflows/digest.yml`: primary run at 06:53 and fallback run at 07:53
+  Asia/Shanghai, plus manual dispatch. GitHub schedules are not exact-time
+  guarantees, so the second run retries only missing channels. Supabase delivery
+  metadata prevents duplicate daily email and WeChat sends.
 
 Run **Collect AI signals** once before **Generate AI trend digest**.
 
@@ -164,6 +166,9 @@ you do not want public-account-based WeChat delivery. Put the QQ and work
 addresses together in `DIGEST_TO`, for example
 `name@qq.com,name@company.com`. The workflow fails clearly when a delivery
 secret is missing instead of silently generating a database-only report.
+Email and WeChat delivery are independent and each is retried up to three times.
+If a manual recovery must deliberately send a second digest on the same day,
+run the workflow with the `force` input enabled.
 
 Reports are saved in the private Supabase `digests` table. View the latest one:
 

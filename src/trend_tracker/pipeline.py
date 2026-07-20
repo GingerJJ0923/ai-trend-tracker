@@ -1,6 +1,8 @@
 import json
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Callable, Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 from .ai import AIService, candidate_scores
 from .config import Settings
@@ -108,8 +110,126 @@ def _ensure_embeddings(repository: SupabaseRepository, ai: AIService, tracks: Li
             repository.update_item_embedding(str(item.id), vector)
 
 
+def _configured_delivery_channels(settings: Settings) -> List[str]:
+    channels = []
+    email_ready = bool(
+        settings.digest_to
+        and (
+            (settings.smtp_username and settings.smtp_password)
+            or (settings.resend_key and settings.digest_from)
+        )
+    )
+    if email_ready:
+        channels.append("email")
+    if settings.serverchan_sendkey:
+        channels.append("wechat")
+    return channels
+
+
+def _run_with_retries(action: Callable[[], None], attempts: int = 3) -> Tuple[bool, str, int]:
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            action()
+            return True, "", attempt
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt < attempts:
+                time.sleep(2 ** (attempt - 1))
+    return False, last_error, attempts
+
+
+def _deliver_report(
+    settings: Settings,
+    http: HttpClient,
+    repository: SupabaseRepository,
+    digest_id: int,
+    metadata: Dict,
+    subject: str,
+    report: str,
+) -> None:
+    delivery = dict(metadata.get("delivery") or {})
+    failures = []
+
+    def record(channel: str, success: bool, error: str, attempts: int) -> None:
+        delivery[channel] = {
+            "status": "success" if success else "failed",
+            "attempts": attempts,
+            "attempted_at": datetime.now(timezone.utc).isoformat(),
+            "error": error[:1000] if error else None,
+        }
+        metadata["delivery"] = delivery
+        repository.update_digest_metadata(digest_id, metadata)
+        if not success:
+            failures.append("{0}: {1}".format(channel, error))
+
+    if "email" in _configured_delivery_channels(settings) and delivery.get("email", {}).get("status") != "success":
+        if settings.smtp_username and settings.smtp_password:
+            email_action = lambda: send_smtp_email(
+                settings.smtp_host,
+                settings.smtp_port,
+                settings.smtp_username,
+                settings.smtp_password,
+                settings.digest_to,
+                subject,
+                report,
+            )
+        else:
+            email_action = lambda: send_email(
+                http,
+                settings.resend_key,
+                settings.digest_from,
+                settings.digest_to,
+                subject,
+                report,
+            )
+        record("email", *_run_with_retries(email_action))
+
+    if "wechat" in _configured_delivery_channels(settings) and delivery.get("wechat", {}).get("status") != "success":
+        record(
+            "wechat",
+            *_run_with_retries(lambda: send_wechat(http, settings.serverchan_sendkey, subject, report)),
+        )
+
+    if failures:
+        raise RuntimeError("Digest delivery failed after retries: " + "; ".join(failures))
+
+
 def digest(settings: Settings) -> str:
     http, repository, ai = make_services(settings)
+    try:
+        local_timezone = ZoneInfo(settings.report_timezone)
+    except (KeyError, ValueError):
+        local_timezone = timezone.utc
+    local_now = datetime.now(local_timezone)
+    day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    subject = "AI 趋势日报｜{0}".format(local_now.strftime("%Y-%m-%d"))
+    required_channels = _configured_delivery_channels(settings)
+
+    existing_digest = None if settings.force_digest else repository.get_latest_digest_since(day_start)
+    if existing_digest:
+        report = str(existing_digest.get("content") or "")
+        metadata = dict(existing_digest.get("metadata") or {})
+        delivery = metadata.get("delivery")
+        path = write_report(report)
+        if not delivery:
+            print("Today's legacy digest already exists; assuming it was delivered and skipping duplicates.")
+            return str(path)
+        if all(delivery.get(channel, {}).get("status") == "success" for channel in required_channels):
+            print("Today's digest has already reached every configured channel; skipping duplicate delivery.")
+            return str(path)
+        _deliver_report(
+            settings,
+            http,
+            repository,
+            int(existing_digest["id"]),
+            metadata,
+            subject,
+            report,
+        )
+        print("Retried only the delivery channels that had not succeeded.")
+        return str(path)
+
     repository.seed_tracks(settings.seed_tracks())
     tracks = repository.get_tracks()
     if not tracks:
@@ -156,32 +276,17 @@ def digest(settings: Settings) -> str:
         timezone_name=settings.report_timezone,
     )
     path = write_report(report)
-    repository.save_digest(
+    metadata = {
+        "scanned_count": len(items),
+        "track_count": len(tracks),
+        "delivery": {channel: {"status": "pending"} for channel in required_channels},
+    }
+    digest_id = repository.save_digest(
         generated_at,
         report,
-        {"scanned_count": len(items), "track_count": len(tracks)},
+        metadata,
     )
-    subject = "AI 趋势日报｜{0}".format(generated_at.strftime("%Y-%m-%d"))
-    if settings.smtp_username and settings.smtp_password:
-        send_smtp_email(
-            settings.smtp_host,
-            settings.smtp_port,
-            settings.smtp_username,
-            settings.smtp_password,
-            settings.digest_to,
-            subject,
-            report,
-        )
-    else:
-        send_email(
-            http,
-            settings.resend_key,
-            settings.digest_from,
-            settings.digest_to,
-            subject,
-            report,
-        )
-    send_wechat(http, settings.serverchan_sendkey, subject, report)
+    _deliver_report(settings, http, repository, digest_id, metadata, subject, report)
     cleanup_result = repository.cleanup()
     storage_status = repository.storage_status()
     print("Report written to {0}".format(path))

@@ -27,6 +27,13 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def supabase_key_role(key: str) -> str:
     """Return the privilege type encoded by a Supabase API key."""
     if key.startswith("sb_secret_"):
@@ -75,6 +82,7 @@ class Settings:
     output_language: str
     report_timezone: str
     report_top_items: int
+    force_digest: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -124,6 +132,7 @@ class Settings:
             output_language=os.environ.get("OUTPUT_LANGUAGE", "zh-CN"),
             report_timezone=os.environ.get("REPORT_TIMEZONE", "Asia/Shanghai"),
             report_top_items=max(1, env_int("REPORT_TOP_ITEMS", 5)),
+            force_digest=env_bool("FORCE_DIGEST"),
         )
 
     def require_supabase(self) -> None:

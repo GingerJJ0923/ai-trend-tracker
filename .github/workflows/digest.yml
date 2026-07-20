@@ -2,9 +2,17 @@ name: Generate AI trend digest
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Generate and deliver again even if today's digest already exists"
+        required: false
+        default: false
+        type: boolean
   schedule:
-    # 08:07 Asia/Shanghai (UTC+8). The non-round minute reduces scheduler delay.
-    - cron: "7 0 * * *"
+    # 06:53 and 07:53 Asia/Shanghai. GitHub schedule is not an exact-time SLA;
+    # the second run is a fallback and database idempotency prevents duplicates.
+    - cron: "53 22 * * *"
+    - cron: "53 23 * * *"
 
 permissions:
   contents: read
@@ -85,6 +93,7 @@ jobs:
           OUTPUT_LANGUAGE: "zh-CN"
           REPORT_TIMEZONE: "Asia/Shanghai"
           REPORT_TOP_ITEMS: "5"
+          FORCE_DIGEST: "${{ inputs.force || false }}"
         run: python -m trend_tracker digest
       - name: Upload digest
         # Disabled by default. In a public repository, uploaded artifacts can be

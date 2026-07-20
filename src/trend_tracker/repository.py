@@ -160,8 +160,21 @@ class SupabaseRepository:
             "resolution=merge-duplicates,return=minimal",
         )
 
-    def save_digest(self, generated_at: datetime, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        self._request(
+    def get_latest_digest_since(self, since: datetime) -> Optional[Dict[str, Any]]:
+        rows = self._request(
+            "GET",
+            "digests",
+            {
+                "generated_at": "gte.{0}".format(since.isoformat()),
+                "select": "id,generated_at,content,metadata",
+                "order": "generated_at.desc",
+                "limit": 1,
+            },
+        ) or []
+        return rows[0] if rows else None
+
+    def save_digest(self, generated_at: datetime, content: str, metadata: Optional[Dict[str, Any]] = None) -> int:
+        rows = self._request(
             "POST",
             "digests",
             payload={
@@ -169,7 +182,19 @@ class SupabaseRepository:
                 "content": content,
                 "metadata": metadata or {},
             },
-            prefer="return=minimal",
+            prefer="return=representation",
+        ) or []
+        if not rows:
+            raise RuntimeError("Supabase did not return the saved digest id")
+        return int(rows[0]["id"])
+
+    def update_digest_metadata(self, digest_id: int, metadata: Dict[str, Any]) -> None:
+        self._request(
+            "PATCH",
+            "digests",
+            {"id": "eq.{0}".format(digest_id)},
+            {"metadata": metadata},
+            "return=minimal",
         )
 
     def log_fetch(self, source_key: str, status: str, item_count: int, error: str = "") -> None:

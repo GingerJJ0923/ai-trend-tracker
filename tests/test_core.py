@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,7 @@ from trend_tracker.connectors import collect_rss
 from trend_tracker.config import Settings, supabase_key_role
 from trend_tracker.http import HttpClient
 from trend_tracker.models import MatchResult, SourceItem, Track
-from trend_tracker.pipeline import deduplicate_observations
+from trend_tracker.pipeline import _deliver_report, _run_with_retries, deduplicate_observations
 from trend_tracker.report import build_report, email_recipients, markdown_email_html, send_email, send_smtp_email, send_wechat
 from trend_tracker.repository import SupabaseRepository
 from trend_tracker.utils import canonical_url, clean_text, cosine_similarity, item_fingerprint, parse_datetime
@@ -97,6 +98,53 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertIn("产品 4", report)
         self.assertNotIn("产品 5", report)
+
+    @patch("trend_tracker.pipeline.time.sleep")
+    def test_delivery_retry_succeeds_after_transient_failure(self, sleep):
+        calls = []
+
+        def flaky_action():
+            calls.append(1)
+            if len(calls) < 3:
+                raise RuntimeError("temporary failure")
+
+        success, error, attempts = _run_with_retries(flaky_action)
+        self.assertTrue(success)
+        self.assertEqual(error, "")
+        self.assertEqual(attempts, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    @patch("trend_tracker.pipeline.time.sleep")
+    @patch("trend_tracker.pipeline.send_wechat")
+    @patch("trend_tracker.pipeline.send_smtp_email")
+    def test_email_failure_does_not_block_wechat(self, smtp_send, wechat_send, sleep):
+        smtp_send.side_effect = RuntimeError("smtp unavailable")
+        settings = SimpleNamespace(
+            digest_to="one@example.com,two@example.com",
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            resend_key="",
+            digest_from="",
+            serverchan_sendkey="SCTexample",
+        )
+
+        class RecordingRepository:
+            def __init__(self):
+                self.metadata = []
+
+            def update_digest_metadata(self, digest_id, metadata):
+                self.metadata.append(json.loads(json.dumps(metadata)))
+
+        repository = RecordingRepository()
+        metadata = {"delivery": {"email": {"status": "pending"}, "wechat": {"status": "pending"}}}
+        with self.assertRaisesRegex(RuntimeError, "email"):
+            _deliver_report(settings, DeliveryHttp(), repository, 1, metadata, "日报", "内容")
+        self.assertEqual(smtp_send.call_count, 3)
+        wechat_send.assert_called_once()
+        self.assertEqual(metadata["delivery"]["email"]["status"], "failed")
+        self.assertEqual(metadata["delivery"]["wechat"]["status"], "success")
 
 
 class FakeHttp(HttpClient):
