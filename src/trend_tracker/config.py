@@ -81,7 +81,10 @@ class Settings:
     tracks_json: str
     output_language: str
     report_timezone: str
-    report_top_items: int
+    report_highlight_items: int
+    report_quick_items: int
+    report_relevance_threshold: int
+    report_show_scores: bool
     force_digest: bool
 
     @classmethod
@@ -131,7 +134,16 @@ class Settings:
             tracks_json=os.environ.get("TRACKS_JSON", "[]"),
             output_language=os.environ.get("OUTPUT_LANGUAGE", "zh-CN"),
             report_timezone=os.environ.get("REPORT_TIMEZONE", "Asia/Shanghai"),
-            report_top_items=max(1, env_int("REPORT_TOP_ITEMS", 5)),
+            report_highlight_items=max(
+                1,
+                env_int("REPORT_HIGHLIGHT_ITEMS", env_int("REPORT_TOP_ITEMS", 3)),
+            ),
+            report_quick_items=max(0, env_int("REPORT_QUICK_ITEMS", 12)),
+            report_relevance_threshold=max(
+                0,
+                min(100, env_int("REPORT_RELEVANCE_THRESHOLD", 50)),
+            ),
+            report_show_scores=env_bool("REPORT_SHOW_SCORES"),
             force_digest=env_bool("FORCE_DIGEST"),
         )
 

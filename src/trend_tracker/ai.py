@@ -167,7 +167,7 @@ class AIService:
             + self.language_instruction
             + "Follow that language even when the tracking goal or source uses another language. "
             "Keep product, company, model, API, protocol and library names in their official spelling. "
-            "title_zh is a natural Chinese display title containing the original product name; summary_zh says what it does in at most 45 Chinese characters; "
+            "title_zh is a natural Chinese display title containing the original product name; summary_zh is a single-line description of what it does in at most 32 Chinese characters; "
             "reason explains the concrete relevance in at most 60 Chinese characters; next_action is one low-cost, specific action in at most 45 Chinese characters. "
             "Do not invent capabilities or evidence."
         )

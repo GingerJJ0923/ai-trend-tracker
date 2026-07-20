@@ -92,7 +92,10 @@ jobs:
           LOOKBACK_HOURS: "30"
           OUTPUT_LANGUAGE: "zh-CN"
           REPORT_TIMEZONE: "Asia/Shanghai"
-          REPORT_TOP_ITEMS: "5"
+          REPORT_HIGHLIGHT_ITEMS: ${{ vars.REPORT_HIGHLIGHT_ITEMS || '3' }}
+          REPORT_QUICK_ITEMS: ${{ vars.REPORT_QUICK_ITEMS || '12' }}
+          REPORT_RELEVANCE_THRESHOLD: ${{ vars.REPORT_RELEVANCE_THRESHOLD || '50' }}
+          REPORT_SHOW_SCORES: ${{ vars.REPORT_SHOW_SCORES || 'false' }}
           FORCE_DIGEST: "${{ inputs.force || false }}"
         run: python -m trend_tracker digest
       - name: Upload digest

@@ -15,6 +15,8 @@ server, and the public repository does not need to contain personal data.
 - Optional multilingual embedding retrieval
 - Provider-neutral, OpenAI-compatible LLM reranking and analysis
 - Up to three deeper analyses per Track and day
+- Lightweight Chinese digest: 30-second conclusion, three highlights, trend radar,
+  and a compact list of additional related signals
 - Private digest storage, optional Resend email, and opt-in artifacts
 - Automatic retention cleanup for the Supabase free database
 - No third-party Python runtime dependencies
@@ -112,7 +114,10 @@ Variables are not secrets; they only select endpoints and models.
 | `UPLOAD_REPORT_ARTIFACT` | leave unset or `false` in public repositories |
 | `OUTPUT_LANGUAGE` | `zh-CN` |
 | `REPORT_TIMEZONE` | `Asia/Shanghai` |
-| `REPORT_TOP_ITEMS` | `5` |
+| `REPORT_HIGHLIGHT_ITEMS` | `3` detailed highlights per Track |
+| `REPORT_QUICK_ITEMS` | `12` one-line related signals per Track |
+| `REPORT_RELEVANCE_THRESHOLD` | `50` |
+| `REPORT_SHOW_SCORES` | `false`; use reader-friendly relevance labels |
 | `FORCE_DIGEST` | leave `false`; manual recovery only |
 
 Example private `TRACKS_JSON`:

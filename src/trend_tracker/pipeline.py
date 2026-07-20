@@ -272,7 +272,10 @@ def digest(settings: Settings) -> str:
         tracks,
         matches_by_track,
         trends_by_track,
-        top_items=settings.report_top_items,
+        highlight_items=settings.report_highlight_items,
+        quick_items=settings.report_quick_items,
+        relevance_threshold=settings.report_relevance_threshold,
+        show_scores=settings.report_show_scores,
         timezone_name=settings.report_timezone,
     )
     path = write_report(report)

@@ -74,12 +74,15 @@ class PipelineTests(unittest.TestCase):
         report = build_report(datetime.now(timezone.utc), 10, [track], {"t": [match]}, {"t": "Agent tools are becoming more actionable."})
         self.assertIn("Directly relevant", report)
         self.assertIn("https://example.com/tool", report)
-        self.assertIn("深度分析", report)
+        self.assertIn("进一步判断", report)
         self.assertIn("30 秒结论", report)
+        self.assertIn("今日重点情报", report)
         self.assertIn("趋势雷达", report)
+        self.assertIn("其他相关信号", report)
+        self.assertNotIn("88 分", report)
         self.assertNotIn("Why it matches", report)
 
-    def test_report_limits_each_track_to_top_items(self):
+    def test_report_splits_highlights_and_quick_signals(self):
         track = Track(id="t", name="智能体", goal="关注可落地的智能体产品")
         matches = []
         for index in range(7):
@@ -94,10 +97,36 @@ class PipelineTests(unittest.TestCase):
             )
         report = build_report(
             datetime.now(timezone.utc), 20, [track], {"t": matches},
-            {"t": "**趋势判断：** 智能体正在走向落地。"}, top_items=5,
+            {"t": "**趋势判断：** 智能体正在走向落地。"},
+            highlight_items=3,
+            quick_items=2,
         )
+        highlights, related = report.split("## 其他相关信号")
+        self.assertIn("#### 3. [产品 2]", highlights)
+        self.assertNotIn("产品 3", highlights)
+        self.assertIn("产品 3", related)
         self.assertIn("产品 4", report)
         self.assertNotIn("产品 5", report)
+
+    def test_report_places_trends_before_related_signals(self):
+        track = Track(id="t", name="智能体", goal="关注可落地的智能体产品")
+        matches = []
+        for index in range(4):
+            item = self.make_item("ph", str(index), "https://example.com/{0}".format(index), "产品 {0}".format(index))
+            matches.append(
+                MatchResult(
+                    "t", str(index), 90 - index, 0.7, "high", "与目标直接相关", item,
+                    display_title="产品 {0}".format(index),
+                    concise_summary="改善智能体工作流",
+                    next_action="用一个任务测试",
+                )
+            )
+        report = build_report(
+            datetime.now(timezone.utc), 20, [track], {"t": matches},
+            {"t": "**趋势判断：** 智能体正在走向落地。"},
+        )
+        self.assertLess(report.index("## 趋势雷达"), report.index("## 其他相关信号"))
+        self.assertIn("[今日重点 3 条](#highlights)", report)
 
     @patch("trend_tracker.pipeline.time.sleep")
     def test_delivery_retry_succeeds_after_transient_failure(self, sleep):
@@ -242,6 +271,26 @@ class ConfigTests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old)
 
+    def test_digest_presentation_configuration(self):
+        old = os.environ.copy()
+        try:
+            os.environ.update(
+                {
+                    "REPORT_HIGHLIGHT_ITEMS": "3",
+                    "REPORT_QUICK_ITEMS": "12",
+                    "REPORT_RELEVANCE_THRESHOLD": "60",
+                    "REPORT_SHOW_SCORES": "true",
+                }
+            )
+            settings = Settings.from_env()
+            self.assertEqual(settings.report_highlight_items, 3)
+            self.assertEqual(settings.report_quick_items, 12)
+            self.assertEqual(settings.report_relevance_threshold, 60)
+            self.assertTrue(settings.report_show_scores)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
     def test_legacy_openai_configuration_remains_supported(self):
         old = os.environ.copy()
         try:
@@ -340,6 +389,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("<h2>30 秒结论</h2>", rendered)
         self.assertIn("<strong>建议动作：</strong>", rendered)
         self.assertNotIn("<pre", rendered)
+
+    def test_email_html_renders_navigation_and_section_anchors(self):
+        rendered = markdown_email_html(
+            "> [今日重点 3 条](#highlights) · [趋势雷达](#trends)\n\n"
+            "## 今日重点情报\n\n## 趋势雷达"
+        )
+        self.assertIn('href="#highlights"', rendered)
+        self.assertIn('id="highlights"', rendered)
+        self.assertIn('id="trends"', rendered)
 
     def test_splits_multiple_email_recipients(self):
         self.assertEqual(

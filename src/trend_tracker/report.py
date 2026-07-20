@@ -19,7 +19,10 @@ def build_report(
     tracks: List[Track],
     matches_by_track: Dict[str, List[MatchResult]],
     trends_by_track: Dict[str, str],
-    top_items: int = 5,
+    highlight_items: int = 3,
+    quick_items: int = 12,
+    relevance_threshold: int = 50,
+    show_scores: bool = False,
     timezone_name: str = "Asia/Shanghai",
 ) -> str:
     try:
@@ -34,20 +37,37 @@ def build_report(
         weekdays[local_time.weekday()],
     )
     relevant_by_track = {
-        track.id: [match for match in matches_by_track.get(track.id, []) if match.score >= 50]
+        track.id: [
+            match
+            for match in matches_by_track.get(track.id, [])
+            if match.score >= relevance_threshold
+        ]
         for track in tracks
     }
     all_relevant = [match for track in tracks for match in relevant_by_track[track.id]]
     analysis_count = sum(1 for match in all_relevant if match.analysis)
     featured = max(all_relevant, key=lambda match: match.score) if all_relevant else None
+    highlight_count = sum(
+        min(len(relevant_by_track[track.id]), highlight_items) for track in tracks
+    )
+    quick_count = sum(
+        min(max(0, len(relevant_by_track[track.id]) - highlight_items), quick_items)
+        for track in tracks
+    )
 
     lines = [
         "# AI 趋势日报｜{0}".format(date_label),
         "",
-        "> 今日扫描 **{0}** 条信息 · 精选 **{1}** 条 · 深度分析 **{2}** 条".format(
+        "> 今日扫描 **{0}** 条信息 · 发现相关 **{1}** 条 · 重点解读 **{2}** 条 · 深度分析 **{3}** 条".format(
             scanned_count,
-            min(len(all_relevant), top_items * max(1, len(tracks))),
+            len(all_relevant),
+            highlight_count,
             analysis_count,
+        ),
+        "",
+        "> [今日重点 {0} 条](#highlights) · [趋势雷达](#trends) · [其他相关 {1} 条](#related)".format(
+            highlight_count,
+            quick_count,
         ),
         "",
         "## 30 秒结论",
@@ -55,9 +75,11 @@ def build_report(
     ]
     if featured:
         title = featured.display_title or featured.item.title
+        tier = "高度相关" if featured.score >= 80 else "值得关注"
+        score = " · {0:.0f} 分".format(featured.score) if show_scores else ""
         lines.extend(
             [
-                "- **今天最值得关注：** {0}（相关度 {1:.0f}）".format(title, featured.score),
+                "- **今天最值得关注：** {0}（{1}{2}）".format(title, tier, score),
                 "- **与你的关系：** {0}".format(featured.reason or "与当前关注目标具有较高相关性。"),
                 "- **建议动作：** {0}".format(featured.next_action or "先阅读原始资料，再决定是否投入进一步测试。"),
                 "",
@@ -66,15 +88,16 @@ def build_report(
     else:
         lines.extend(["本次采集没有信息达到相关性门槛，建议暂不行动，等待下一轮信号。", ""])
 
+    lines.extend(["## 今日重点情报", ""])
     for track in tracks:
         relevant = relevant_by_track[track.id]
         high = [match for match in relevant if match.score >= 80]
         lines.extend(
             [
-                "## 今日重点情报｜{0}".format(track.name),
+                "### {0}".format(track.name),
                 "",
-                "发现 **{0}** 条相关信息，其中 **{1}** 条为高度相关；以下展示最值得阅读的 {2} 条。".format(
-                    len(relevant), len(high), min(len(relevant), top_items)
+                "发现 **{0}** 条相关信息，其中 **{1}** 条高度相关；以下只展开最值得阅读的 {2} 条。".format(
+                    len(relevant), len(high), min(len(relevant), highlight_items)
                 ),
                 "",
             ]
@@ -82,14 +105,15 @@ def build_report(
         if not relevant:
             lines.extend(["暂时没有信息达到相关性门槛。", ""])
             continue
-        for index, match in enumerate(relevant[:top_items], 1):
+        for index, match in enumerate(relevant[:highlight_items], 1):
             target = match.item.product_url or match.item.url
             title = match.display_title or match.item.title
             tier = "高度相关" if match.score >= 80 else "值得关注"
+            score = " · {0:.0f} 分".format(match.score) if show_scores else ""
             published = match.item.published_at.astimezone(local_time.tzinfo)
             lines.extend(
                 [
-                    "### {0}. [{1}]({2})｜{3:.0f} · {4}".format(index, title, target, match.score, tier),
+                    "#### {0}. [{1}]({2})｜{3}{4}".format(index, title, target, tier, score),
                     "",
                     "- **是什么：** {0}".format(match.concise_summary or "请查看原始页面了解产品或技术详情。"),
                     "- **为什么值得看：** {0}".format(match.reason or "与当前关注目标具有直接关联。"),
@@ -99,7 +123,7 @@ def build_report(
                 ]
             )
             if match.analysis:
-                lines.extend(["", "**深度分析**", "", match.analysis])
+                lines.extend(["", "**进一步判断**", "", match.analysis])
             lines.append("")
 
     lines.extend(["## 趋势雷达", ""])
@@ -112,6 +136,41 @@ def build_report(
                 "",
             ]
         )
+
+    lines.extend(["## 其他相关信号", ""])
+    for track in tracks:
+        remaining = relevant_by_track[track.id][highlight_items:]
+        displayed = remaining[:quick_items]
+        lines.extend(["### {0}".format(track.name), ""])
+        if not remaining:
+            lines.extend(["除今日重点外，暂时没有更多相关信号。", ""])
+            continue
+        for match in displayed:
+            target = match.item.product_url or match.item.url
+            title = match.display_title or match.item.title
+            summary = match.concise_summary or "与当前关注目标相关，点击查看原始资料。"
+            tier = "高度相关" if match.score >= 80 else "值得关注"
+            score = " · {0:.0f} 分".format(match.score) if show_scores else ""
+            lines.append(
+                "- **[{0}]({1})** — {2} · {3}{4}".format(
+                    title,
+                    target,
+                    summary,
+                    tier,
+                    score,
+                )
+            )
+        hidden_count = len(remaining) - len(displayed)
+        if hidden_count > 0:
+            lines.extend(
+                [
+                    "",
+                    "另有 **{0}** 条相关信号已完成筛选并保留在数据库中，本期邮件不展开。".format(
+                        hidden_count
+                    ),
+                ]
+            )
+        lines.append("")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -130,7 +189,7 @@ def email_recipients(value: str) -> List[str]:
 def _inline_markdown(value: str) -> str:
     parts = []
     position = 0
-    pattern = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+    pattern = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+|#[A-Za-z0-9_-]+)\)")
     for match in pattern.finditer(value):
         parts.append(html.escape(value[position : match.start()]))
         label = html.escape(match.group(1))
@@ -162,9 +221,19 @@ def markdown_email_html(report: str) -> str:
         if line.startswith("# "):
             blocks.append("<h1>{0}</h1>".format(_inline_markdown(line[2:])))
         elif line.startswith("## "):
-            blocks.append("<h2>{0}</h2>".format(_inline_markdown(line[3:])))
+            title = line[3:]
+            section_ids = {
+                "今日重点情报": "highlights",
+                "趋势雷达": "trends",
+                "其他相关信号": "related",
+            }
+            section_id = section_ids.get(title, "")
+            id_attribute = ' id="{0}"'.format(section_id) if section_id else ""
+            blocks.append("<h2{0}>{1}</h2>".format(id_attribute, _inline_markdown(title)))
         elif line.startswith("### "):
             blocks.append("<h3>{0}</h3>".format(_inline_markdown(line[4:])))
+        elif line.startswith("#### "):
+            blocks.append("<h4>{0}</h4>".format(_inline_markdown(line[5:])))
         elif line.startswith("> "):
             blocks.append("<div class=\"meta\">{0}</div>".format(_inline_markdown(line[2:])))
         else:
@@ -176,9 +245,9 @@ def markdown_email_html(report: str) -> str:
 <html><head><meta charset="utf-8"><style>
 body{margin:0;background:#f4f6f8;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.65}
 .wrap{max-width:720px;margin:0 auto;padding:28px 18px}.paper{background:#fff;border:1px solid #e8ebf0;border-radius:16px;padding:30px;box-shadow:0 8px 30px rgba(28,39,60,.06)}
-h1{font-size:27px;line-height:1.3;margin:0 0 14px;color:#101828}h2{font-size:20px;margin:32px 0 14px;padding-top:22px;border-top:1px solid #edf0f4;color:#15213a}h3{font-size:17px;margin:24px 0 10px;color:#243b67}
+h1{font-size:27px;line-height:1.3;margin:0 0 14px;color:#101828}h2{font-size:20px;margin:32px 0 14px;padding-top:22px;border-top:1px solid #edf0f4;color:#15213a}h3{font-size:17px;margin:24px 0 10px;color:#243b67}h4{font-size:16px;margin:20px 0 8px;color:#1f3155}
 p{margin:8px 0}.meta{margin:12px 0 18px;padding:12px 15px;border-radius:10px;background:#f0f5ff;color:#3c4e72}ul{margin:8px 0 14px;padding-left:22px}li{margin:7px 0}
-a{color:#2457d6;text-decoration:none;font-weight:600}strong{color:#101828}@media(max-width:600px){.wrap{padding:0}.paper{border-radius:0;border:0;padding:22px 18px}}
+a{color:#2457d6;text-decoration:none;font-weight:600}.meta a{display:inline-block;margin:3px 4px 3px 0;padding:5px 9px;border:1px solid #cdd9f2;border-radius:999px;background:#fff}strong{color:#101828}@media(max-width:600px){.wrap{padding:0}.paper{border-radius:0;border:0;padding:22px 18px}}
 </style></head><body><div class="wrap"><div class="paper">__DIGEST_CONTENT__</div></div></body></html>""".replace("__DIGEST_CONTENT__", content)
 
 
