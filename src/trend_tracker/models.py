@@ -36,6 +36,22 @@ class Track:
     name: str
     goal: str
     embedding: Optional[List[float]] = None
+    beta_user_id: Optional[str] = None
+    compiled_goal: str = ""
+    goal_spec: Dict[str, Any] = field(default_factory=dict)
+
+    def matching_goal(self) -> str:
+        """Use the reviewed structured goal when available, with raw text as source of truth."""
+        return self.compiled_goal.strip() or self.goal.strip()
+
+
+@dataclass
+class BetaUser:
+    id: str
+    email: str
+    display_name: str = ""
+    timezone: str = "Asia/Shanghai"
+    wechat_enabled: bool = False
 
 
 @dataclass
@@ -51,3 +67,4 @@ class MatchResult:
     display_title: str = ""
     concise_summary: str = ""
     next_action: str = ""
+    feedback_links: Dict[str, str] = field(default_factory=dict)

@@ -1,14 +1,15 @@
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from .ai import AIService, candidate_scores
 from .config import Settings
 from .connectors import collect_source
+from .feedback import feedback_url, sign_feedback_token
 from .http import HttpClient
-from .models import MatchResult, SourceItem, Track
+from .models import BetaUser, MatchResult, SourceItem, Track
 from .report import build_report, send_email, send_smtp_email, send_wechat, write_report
 from .repository import SupabaseRepository
 
@@ -97,7 +98,7 @@ def _ensure_embeddings(repository: SupabaseRepository, ai: AIService, tracks: Li
         return
     missing_tracks = [track for track in tracks if not track.embedding]
     if missing_tracks:
-        vectors = ai.embeddings([track.goal for track in missing_tracks])
+        vectors = ai.embeddings([track.matching_goal() for track in missing_tracks])
         for track, vector in zip(missing_tracks, vectors):
             track.embedding = vector
             repository.update_track_embedding(track.id, vector)
@@ -110,10 +111,14 @@ def _ensure_embeddings(repository: SupabaseRepository, ai: AIService, tracks: Li
             repository.update_item_embedding(str(item.id), vector)
 
 
-def _configured_delivery_channels(settings: Settings) -> List[str]:
+def _configured_delivery_channels(
+    settings: Settings,
+    recipient: Optional[str] = None,
+    allow_wechat: bool = True,
+) -> List[str]:
     channels = []
     email_ready = bool(
-        settings.digest_to
+        (recipient or settings.digest_to)
         and (
             (settings.smtp_username and settings.smtp_password)
             or (settings.resend_key and settings.digest_from)
@@ -121,7 +126,7 @@ def _configured_delivery_channels(settings: Settings) -> List[str]:
     )
     if email_ready:
         channels.append("email")
-    if settings.serverchan_sendkey:
+    if allow_wechat and settings.serverchan_sendkey:
         channels.append("wechat")
     return channels
 
@@ -147,6 +152,8 @@ def _deliver_report(
     metadata: Dict,
     subject: str,
     report: str,
+    recipient: Optional[str] = None,
+    allow_wechat: bool = True,
 ) -> None:
     delivery = dict(metadata.get("delivery") or {})
     failures = []
@@ -163,14 +170,16 @@ def _deliver_report(
         if not success:
             failures.append("{0}: {1}".format(channel, error))
 
-    if "email" in _configured_delivery_channels(settings) and delivery.get("email", {}).get("status") != "success":
+    delivery_recipient = recipient or settings.digest_to
+    channels = _configured_delivery_channels(settings, delivery_recipient, allow_wechat)
+    if "email" in channels and delivery.get("email", {}).get("status") != "success":
         if settings.smtp_username and settings.smtp_password:
             email_action = lambda: send_smtp_email(
                 settings.smtp_host,
                 settings.smtp_port,
                 settings.smtp_username,
                 settings.smtp_password,
-                settings.digest_to,
+                delivery_recipient,
                 subject,
                 report,
             )
@@ -179,13 +188,13 @@ def _deliver_report(
                 http,
                 settings.resend_key,
                 settings.digest_from,
-                settings.digest_to,
+                delivery_recipient,
                 subject,
                 report,
             )
         record("email", *_run_with_retries(email_action))
 
-    if "wechat" in _configured_delivery_channels(settings) and delivery.get("wechat", {}).get("status") != "success":
+    if "wechat" in channels and delivery.get("wechat", {}).get("status") != "success":
         record(
             "wechat",
             *_run_with_retries(lambda: send_wechat(http, settings.serverchan_sendkey, subject, report)),
@@ -195,23 +204,84 @@ def _deliver_report(
         raise RuntimeError("Digest delivery failed after retries: " + "; ".join(failures))
 
 
-def digest(settings: Settings) -> str:
-    http, repository, ai = make_services(settings)
+def _compile_tracks(
+    repository: SupabaseRepository, ai: AIService, tracks: List[Track]
+) -> None:
+    for track in tracks:
+        if track.compiled_goal and track.goal_spec.get("source") != "raw_fallback":
+            continue
+        compiled_goal, goal_spec = ai.compile_goal(track)
+        track.compiled_goal = compiled_goal
+        track.goal_spec = goal_spec
+        track.embedding = None
+        repository.update_compiled_goal(track.id, compiled_goal, goal_spec)
+
+
+def _attach_feedback_links(
+    settings: Settings, beta_user: BetaUser, matches: List[MatchResult]
+) -> None:
+    if not settings.feedback_enabled:
+        return
+    for match in matches:
+        match.feedback_links = {}
+        for action in ("helpful", "irrelevant", "deep_dive"):
+            token = sign_feedback_token(
+                settings.feedback_signing_secret,
+                beta_user.id,
+                match.track_id,
+                match.item_id,
+                action,
+            )
+            match.feedback_links[action] = feedback_url(
+                settings.feedback_page_url,
+                settings.feedback_api_url,
+                token,
+            )
+
+
+def _local_day(timezone_name: str) -> Tuple[datetime, datetime, str]:
     try:
-        local_timezone = ZoneInfo(settings.report_timezone)
+        local_timezone = ZoneInfo(timezone_name)
     except (KeyError, ValueError):
         local_timezone = timezone.utc
     local_now = datetime.now(local_timezone)
     day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    subject = "AI 趋势日报｜{0}".format(local_now.strftime("%Y-%m-%d"))
-    required_channels = _configured_delivery_channels(settings)
+    return local_now, day_start, "AI 趋势日报｜{0}".format(local_now.strftime("%Y-%m-%d"))
 
-    existing_digest = None if settings.force_digest else repository.get_latest_digest_since(day_start)
+
+def _process_digest(
+    settings: Settings,
+    http: HttpClient,
+    repository: SupabaseRepository,
+    ai: AIService,
+    items: List[SourceItem],
+    tracks: List[Track],
+    beta_user: Optional[BetaUser] = None,
+) -> str:
+    timezone_name = beta_user.timezone if beta_user else settings.report_timezone
+    local_now, day_start, subject = _local_day(timezone_name)
+    recipient = beta_user.email if beta_user else settings.digest_to
+    allow_wechat = beta_user is None or beta_user.wechat_enabled
+    required_channels = _configured_delivery_channels(
+        settings, recipient, allow_wechat
+    )
+    if beta_user and "email" not in required_channels:
+        raise RuntimeError(
+            "A beta user cannot receive email: configure SMTP or Resend credentials"
+        )
+
+    beta_user_id = beta_user.id if beta_user else None
+    existing_digest = (
+        None
+        if settings.force_digest
+        else repository.get_latest_digest_since(day_start, beta_user_id)
+    )
     if existing_digest:
         report = str(existing_digest.get("content") or "")
         metadata = dict(existing_digest.get("metadata") or {})
         delivery = metadata.get("delivery")
-        path = write_report(report)
+        suffix = beta_user.id[:8] if beta_user else ""
+        path = write_report(report, suffix=suffix)
         if not delivery:
             print("Today's legacy digest already exists; assuming it was delivered and skipping duplicates.")
             return str(path)
@@ -226,27 +296,32 @@ def digest(settings: Settings) -> str:
             metadata,
             subject,
             report,
+            recipient,
+            allow_wechat,
         )
         print("Retried only the delivery channels that had not succeeded.")
         return str(path)
 
-    repository.seed_tracks(settings.seed_tracks())
-    tracks = repository.get_tracks()
     if not tracks:
-        raise RuntimeError("No active Tracks. Configure TRACKS_JSON or insert a row into the tracks table.")
+        raise RuntimeError("No active Tracks for this digest recipient.")
 
-    since = datetime.now(timezone.utc) - timedelta(hours=settings.lookback_hours)
-    observations = repository.get_recent_items(since)
-    items = deduplicate_observations(observations)
+    _compile_tracks(repository, ai, tracks)
     _ensure_embeddings(repository, ai, tracks, items)
 
     matches_by_track: Dict[str, List[MatchResult]] = {}
     trends_by_track: Dict[str, str] = {}
     db_match_records = []
     for track in tracks:
+        feedback_examples = (
+            repository.get_feedback_examples(beta_user.id, track.id)
+            if beta_user
+            else []
+        )
         candidates = candidate_scores(track, items)[: settings.match_candidates]
-        matches = ai.rerank(track, candidates)
+        matches = ai.rerank(track, candidates, feedback_examples)
         relevant = [match for match in matches if match.score >= 50]
+        if beta_user:
+            _attach_feedback_links(settings, beta_user, relevant)
         for match in matches:
             db_match_records.append(
                 {
@@ -276,23 +351,98 @@ def digest(settings: Settings) -> str:
         quick_items=settings.report_quick_items,
         relevance_threshold=settings.report_relevance_threshold,
         show_scores=settings.report_show_scores,
-        timezone_name=settings.report_timezone,
+        timezone_name=timezone_name,
     )
-    path = write_report(report)
+    suffix = beta_user.id[:8] if beta_user else ""
+    path = write_report(report, suffix=suffix)
     metadata = {
         "scanned_count": len(items),
         "track_count": len(tracks),
+        "mode": "design_partner_beta" if beta_user else "legacy_personal",
+        "recipient": beta_user.email if beta_user else None,
         "delivery": {channel: {"status": "pending"} for channel in required_channels},
     }
     digest_id = repository.save_digest(
         generated_at,
         report,
         metadata,
+        beta_user_id,
     )
-    _deliver_report(settings, http, repository, digest_id, metadata, subject, report)
+    exposed_matches = [
+        match
+        for track in tracks
+        for match in matches_by_track.get(track.id, [])
+        if match.score >= settings.report_relevance_threshold
+    ]
+    repository.record_digest_items(digest_id, exposed_matches)
+    _deliver_report(
+        settings,
+        http,
+        repository,
+        digest_id,
+        metadata,
+        subject,
+        report,
+        recipient,
+        allow_wechat,
+    )
+    print("Report written to {0}".format(path))
+    return str(path)
+
+
+def digest(settings: Settings) -> str:
+    http, repository, ai = make_services(settings)
+    beta_seeds = settings.beta_users()
+    if beta_seeds:
+        created = repository.seed_beta_users(beta_seeds)
+        print("Created {0} new beta users".format(created))
+        beta_users = repository.get_beta_users()
+    else:
+        beta_users = []
+        repository.seed_tracks(settings.seed_tracks())
+
+    since = datetime.now(timezone.utc) - timedelta(hours=settings.lookback_hours)
+    observations = repository.get_recent_items(since)
+    items = deduplicate_observations(observations)
+    paths: List[str] = []
+    failures: List[str] = []
+
+    if beta_users:
+        for beta_user in beta_users:
+            try:
+                tracks = repository.get_tracks(beta_user.id)
+                paths.append(
+                    _process_digest(
+                        settings,
+                        http,
+                        repository,
+                        ai,
+                        items,
+                        tracks,
+                        beta_user,
+                    )
+                )
+            except Exception as exc:
+                anonymous_id = beta_user.id[:8]
+                failures.append("{0}: {1}".format(anonymous_id, exc))
+                print("Beta digest FAILED for user {0}: {1}".format(anonymous_id, exc))
+    else:
+        tracks = repository.get_tracks()
+        if not tracks:
+            raise RuntimeError(
+                "No active Tracks. Configure TRACKS_JSON or BETA_USERS_JSON."
+            )
+        paths.append(
+            _process_digest(settings, http, repository, ai, items, tracks)
+        )
+
     cleanup_result = repository.cleanup()
     storage_status = repository.storage_status()
-    print("Report written to {0}".format(path))
     print("Cleanup result: {0}".format(cleanup_result))
     print("Database storage: {0}".format(storage_status))
-    return str(path)
+    if failures:
+        raise RuntimeError(
+            "Some beta digests failed after other users were processed: "
+            + "; ".join(failures)
+        )
+    return paths[-1] if paths else ""

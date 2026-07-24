@@ -11,9 +11,15 @@ from pathlib import Path
 from trend_tracker.ai import AIService, candidate_scores
 from trend_tracker.connectors import collect_rss
 from trend_tracker.config import Settings, supabase_key_role
+from trend_tracker.feedback import feedback_url, sign_feedback_token, verify_feedback_token
 from trend_tracker.http import HttpClient
 from trend_tracker.models import MatchResult, SourceItem, Track
-from trend_tracker.pipeline import _deliver_report, _run_with_retries, deduplicate_observations
+from trend_tracker.pipeline import (
+    _configured_delivery_channels,
+    _deliver_report,
+    _run_with_retries,
+    deduplicate_observations,
+)
 from trend_tracker.report import build_report, email_recipients, markdown_email_html, send_email, send_smtp_email, send_wechat
 from trend_tracker.repository import SupabaseRepository
 from trend_tracker.utils import canonical_url, clean_text, cosine_similarity, item_fingerprint, parse_datetime
@@ -128,6 +134,37 @@ class PipelineTests(unittest.TestCase):
         self.assertLess(report.index("## 趋势雷达"), report.index("## 其他相关信号"))
         self.assertIn("[今日重点 3 条](#highlights)", report)
 
+    def test_report_uses_three_beta_feedback_actions_without_known(self):
+        item = self.make_item("ph", "1", "https://example.com/tool")
+        track = Track(id="t", name="智能体", goal="关注智能体")
+        match = MatchResult(
+            "t",
+            "1",
+            90,
+            0.8,
+            "high",
+            "直接相关",
+            item,
+            feedback_links={
+                "helpful": "https://feedback.test/#helpful",
+                "irrelevant": "https://feedback.test/#irrelevant",
+                "deep_dive": "https://feedback.test/#deep",
+            },
+        )
+        report = build_report(
+            datetime.now(timezone.utc),
+            1,
+            [track],
+            {"t": [match]},
+            {"t": "趋势"},
+        )
+        self.assertIn("[有用]", report)
+        self.assertIn("[不相关]", report)
+        self.assertIn("[继续深挖]", report)
+        self.assertNotIn("已经知道", report)
+        rendered = markdown_email_html(report)
+        self.assertIn('href="https://feedback.test/#helpful"', rendered)
+
     @patch("trend_tracker.pipeline.time.sleep")
     def test_delivery_retry_succeeds_after_transient_failure(self, sleep):
         calls = []
@@ -174,6 +211,20 @@ class PipelineTests(unittest.TestCase):
         wechat_send.assert_called_once()
         self.assertEqual(metadata["delivery"]["email"]["status"], "failed")
         self.assertEqual(metadata["delivery"]["wechat"]["status"], "success")
+
+    def test_beta_recipient_gets_private_email_without_personal_wechat(self):
+        settings = SimpleNamespace(
+            digest_to="",
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            resend_key="",
+            digest_from="",
+            serverchan_sendkey="personal-wechat-key",
+        )
+        channels = _configured_delivery_channels(
+            settings, "invitee@example.com", allow_wechat=False
+        )
+        self.assertEqual(channels, ["email"])
 
 
 class FakeHttp(HttpClient):
@@ -291,6 +342,26 @@ class ConfigTests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old)
 
+    def test_parses_invite_only_beta_users(self):
+        old = os.environ.copy()
+        try:
+            os.environ["BETA_USERS_JSON"] = json.dumps(
+                [
+                    {
+                        "email": "Friend@Example.com",
+                        "display_name": "朋友",
+                        "tracks": [{"name": "AI Coding", "goal": "关注新工具"}],
+                    }
+                ]
+            )
+            settings = Settings.from_env()
+            users = settings.beta_users()
+            self.assertEqual(users[0]["email"], "friend@example.com")
+            self.assertEqual(users[0]["tracks"][0]["goal"], "关注新工具")
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
     def test_legacy_openai_configuration_remains_supported(self):
         old = os.environ.copy()
         try:
@@ -361,6 +432,32 @@ class AIServiceTests(unittest.TestCase):
     def test_parses_fenced_json_from_compatible_provider(self):
         value = AIService._parse_json_content("```json\n{\"analysis\":\"ok\"}\n```")
         self.assertEqual(value["analysis"], "ok")
+
+
+class FeedbackTokenTests(unittest.TestCase):
+    def test_signed_feedback_round_trip_and_fragment_url(self):
+        token = sign_feedback_token(
+            "secret", "user-id", "track-id", "item-id", "helpful", expires_at=200
+        )
+        payload = verify_feedback_token("secret", token, now=100)
+        self.assertEqual(payload["a"], "helpful")
+        url = feedback_url(
+            "https://owner.github.io/repo/feedback.html",
+            "https://project.supabase.co/functions/v1/feedback",
+            token,
+        )
+        self.assertIn("?api=", url)
+        self.assertIn("#", url)
+        self.assertNotIn("token=", url)
+
+    def test_rejects_tampered_or_expired_feedback(self):
+        token = sign_feedback_token(
+            "secret", "user-id", "track-id", "item-id", "irrelevant", expires_at=100
+        )
+        with self.assertRaisesRegex(ValueError, "signature"):
+            verify_feedback_token("wrong-secret", token, now=50)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            verify_feedback_token("secret", token, now=101)
 
 
 class DeliveryHttp:

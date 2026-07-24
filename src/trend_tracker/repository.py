@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from .http import HttpClient
-from .models import SourceItem, Track
+from .models import BetaUser, MatchResult, SourceItem, Track
 from .utils import parse_datetime, parse_vector
 
 
@@ -39,14 +39,29 @@ class SupabaseRepository:
     def seed_tracks(self, tracks: Iterable[Dict[str, str]]) -> int:
         count = 0
         for track in tracks:
-            existing = self._request("GET", "tracks", {"name": "eq.{0}".format(track["name"]), "select": "id,goal", "limit": 1}) or []
+            existing = self._request(
+                "GET",
+                "tracks",
+                {
+                    "beta_user_id": "is.null",
+                    "name": "eq.{0}".format(track["name"]),
+                    "select": "id,goal",
+                    "limit": 1,
+                },
+            ) or []
             if existing:
                 if existing[0].get("goal") != track["goal"]:
                     self._request(
                         "PATCH",
                         "tracks",
                         {"id": "eq.{0}".format(existing[0]["id"])},
-                        {"goal": track["goal"], "embedding": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+                        {
+                            "goal": track["goal"],
+                            "compiled_goal": "",
+                            "goal_spec": {},
+                            "embedding": None,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        },
                         "return=minimal",
                     )
                 continue
@@ -54,9 +69,161 @@ class SupabaseRepository:
             count += 1
         return count
 
-    def get_tracks(self) -> List[Track]:
-        rows = self._request("GET", "tracks", {"active": "eq.true", "select": "id,name,goal,embedding", "order": "created_at.asc"}) or []
-        return [Track(id=row["id"], name=row["name"], goal=row["goal"], embedding=parse_vector(row.get("embedding"))) for row in rows]
+    def seed_beta_users(self, users: Iterable[Dict[str, Any]]) -> int:
+        users = list(users)
+        self._request(
+            "PATCH",
+            "beta_users",
+            {"active": "eq.true"},
+            {"active": False},
+            "return=minimal",
+        )
+        created = 0
+        for seed in users:
+            rows = self._request(
+                "GET",
+                "beta_users",
+                {"email": "eq.{0}".format(seed["email"]), "select": "id", "limit": 1},
+            ) or []
+            payload = {
+                "email": seed["email"],
+                "display_name": seed.get("display_name") or "",
+                "timezone": seed.get("timezone") or "Asia/Shanghai",
+                "wechat_enabled": bool(seed.get("wechat_enabled")),
+                "active": True,
+            }
+            if rows:
+                user_id = rows[0]["id"]
+                self._request(
+                    "PATCH",
+                    "beta_users",
+                    {"id": "eq.{0}".format(user_id)},
+                    payload,
+                    "return=minimal",
+                )
+            else:
+                inserted = self._request(
+                    "POST",
+                    "beta_users",
+                    payload=payload,
+                    prefer="return=representation",
+                ) or []
+                if not inserted:
+                    raise RuntimeError("Supabase did not return the beta user id")
+                user_id = inserted[0]["id"]
+                created += 1
+            self._seed_beta_tracks(str(user_id), seed.get("tracks") or [])
+        return created
+
+    def _seed_beta_tracks(self, beta_user_id: str, tracks: Iterable[Dict[str, str]]) -> None:
+        tracks = list(tracks)
+        self._request(
+            "PATCH",
+            "tracks",
+            {"beta_user_id": "eq.{0}".format(beta_user_id)},
+            {"active": False},
+            "return=minimal",
+        )
+        for track in tracks:
+            rows = self._request(
+                "GET",
+                "tracks",
+                {
+                    "beta_user_id": "eq.{0}".format(beta_user_id),
+                    "name": "eq.{0}".format(track["name"]),
+                    "select": "id,goal",
+                    "limit": 1,
+                },
+            ) or []
+            if rows:
+                update_payload: Dict[str, Any] = {"active": True}
+                if rows[0].get("goal") != track["goal"]:
+                    update_payload.update(
+                        {
+                            "goal": track["goal"],
+                            "compiled_goal": "",
+                            "goal_spec": {},
+                            "embedding": None,
+                        }
+                    )
+                self._request(
+                    "PATCH",
+                    "tracks",
+                    {"id": "eq.{0}".format(rows[0]["id"])},
+                    update_payload,
+                    "return=minimal",
+                )
+                continue
+            self._request(
+                "POST",
+                "tracks",
+                payload={
+                    "beta_user_id": beta_user_id,
+                    "name": track["name"],
+                    "goal": track["goal"],
+                    "active": True,
+                },
+                prefer="return=minimal",
+            )
+
+    def get_beta_users(self) -> List[BetaUser]:
+        rows = self._request(
+            "GET",
+            "beta_users",
+            {
+                "active": "eq.true",
+                "select": "id,email,display_name,timezone,wechat_enabled",
+                "order": "created_at.asc",
+            },
+        ) or []
+        return [
+            BetaUser(
+                id=str(row["id"]),
+                email=str(row["email"]),
+                display_name=str(row.get("display_name") or ""),
+                timezone=str(row.get("timezone") or "Asia/Shanghai"),
+                wechat_enabled=bool(row.get("wechat_enabled")),
+            )
+            for row in rows
+        ]
+
+    def get_tracks(self, beta_user_id: Optional[str] = None) -> List[Track]:
+        query: Dict[str, Any] = {
+            "active": "eq.true",
+            "select": "id,beta_user_id,name,goal,compiled_goal,goal_spec,embedding",
+            "order": "created_at.asc",
+            "beta_user_id": (
+                "eq.{0}".format(beta_user_id) if beta_user_id else "is.null"
+            ),
+        }
+        rows = self._request("GET", "tracks", query) or []
+        return [
+            Track(
+                id=row["id"],
+                name=row["name"],
+                goal=row["goal"],
+                embedding=parse_vector(row.get("embedding")),
+                beta_user_id=row.get("beta_user_id"),
+                compiled_goal=str(row.get("compiled_goal") or ""),
+                goal_spec=row.get("goal_spec") or {},
+            )
+            for row in rows
+        ]
+
+    def update_compiled_goal(
+        self, track_id: str, compiled_goal: str, goal_spec: Dict[str, Any]
+    ) -> None:
+        self._request(
+            "PATCH",
+            "tracks",
+            {"id": "eq.{0}".format(track_id)},
+            {
+                "compiled_goal": compiled_goal,
+                "goal_spec": goal_spec,
+                "embedding": None,
+            },
+            "return=minimal",
+        )
 
     def update_track_embedding(self, track_id: str, embedding: List[float]) -> None:
         self._request(
@@ -160,20 +327,49 @@ class SupabaseRepository:
             "resolution=merge-duplicates,return=minimal",
         )
 
-    def get_latest_digest_since(self, since: datetime) -> Optional[Dict[str, Any]]:
+    def get_feedback_examples(
+        self, beta_user_id: str, track_id: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        if not beta_user_id or not track_id:
+            return []
+        return self._request(
+            "GET",
+            "feedback",
+            {
+                "beta_user_id": "eq.{0}".format(beta_user_id),
+                "track_id": "eq.{0}".format(track_id),
+                "select": "value,note,items(title,summary)",
+                "order": "created_at.desc",
+                "limit": max(1, min(limit, 50)),
+            },
+        ) or []
+
+    def get_latest_digest_since(
+        self, since: datetime, beta_user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        query: Dict[str, Any] = {
+            "generated_at": "gte.{0}".format(since.isoformat()),
+            "select": "id,generated_at,content,metadata",
+            "order": "generated_at.desc",
+            "limit": 1,
+            "beta_user_id": (
+                "eq.{0}".format(beta_user_id) if beta_user_id else "is.null"
+            ),
+        }
         rows = self._request(
             "GET",
             "digests",
-            {
-                "generated_at": "gte.{0}".format(since.isoformat()),
-                "select": "id,generated_at,content,metadata",
-                "order": "generated_at.desc",
-                "limit": 1,
-            },
+            query,
         ) or []
         return rows[0] if rows else None
 
-    def save_digest(self, generated_at: datetime, content: str, metadata: Optional[Dict[str, Any]] = None) -> int:
+    def save_digest(
+        self,
+        generated_at: datetime,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        beta_user_id: Optional[str] = None,
+    ) -> int:
         rows = self._request(
             "POST",
             "digests",
@@ -181,12 +377,36 @@ class SupabaseRepository:
                 "generated_at": generated_at.isoformat(),
                 "content": content,
                 "metadata": metadata or {},
+                "beta_user_id": beta_user_id,
             },
             prefer="return=representation",
         ) or []
         if not rows:
             raise RuntimeError("Supabase did not return the saved digest id")
         return int(rows[0]["id"])
+
+    def record_digest_items(
+        self, digest_id: int, matches: Iterable[MatchResult]
+    ) -> None:
+        rows = []
+        for position, match in enumerate(matches, 1):
+            rows.append(
+                {
+                    "digest_id": digest_id,
+                    "track_id": match.track_id,
+                    "item_id": match.item_id,
+                    "position": position,
+                    "section": "highlight" if position <= 3 else "related",
+                }
+            )
+        if rows:
+            self._request(
+                "POST",
+                "digest_items",
+                {"on_conflict": "digest_id,track_id,item_id"},
+                rows,
+                "resolution=merge-duplicates,return=minimal",
+            )
 
     def update_digest_metadata(self, digest_id: int, metadata: Dict[str, Any]) -> None:
         self._request(

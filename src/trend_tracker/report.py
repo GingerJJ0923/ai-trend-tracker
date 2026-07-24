@@ -124,6 +124,17 @@ def build_report(
             )
             if match.analysis:
                 lines.extend(["", "**进一步判断**", "", match.analysis])
+            if match.feedback_links:
+                lines.extend(
+                    [
+                        "",
+                        "> 这条推荐对你如何？[有用]({0}) · [不相关]({1}) · [继续深挖]({2})".format(
+                            match.feedback_links.get("helpful", ""),
+                            match.feedback_links.get("irrelevant", ""),
+                            match.feedback_links.get("deep_dive", ""),
+                        ),
+                    ]
+                )
             lines.append("")
 
     lines.extend(["## 趋势雷达", ""])
@@ -174,10 +185,14 @@ def build_report(
     return "\n".join(lines).strip() + "\n"
 
 
-def write_report(content: str, directory: str = "reports") -> Path:
+def write_report(content: str, directory: str = "reports", suffix: str = "") -> Path:
     path = Path(directory)
     path.mkdir(parents=True, exist_ok=True)
-    report_path = path / (datetime.now().strftime("%Y-%m-%d") + ".md")
+    safe_suffix = re.sub(r"[^A-Za-z0-9_-]+", "-", suffix).strip("-")
+    filename = datetime.now().strftime("%Y-%m-%d")
+    if safe_suffix:
+        filename += "-" + safe_suffix
+    report_path = path / (filename + ".md")
     report_path.write_text(content, encoding="utf-8")
     return report_path
 

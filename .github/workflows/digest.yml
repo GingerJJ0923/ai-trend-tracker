@@ -24,7 +24,7 @@ concurrency:
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -42,6 +42,12 @@ jobs:
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}
+          BETA_USERS_JSON: ${{ secrets.BETA_USERS_JSON }}
+          BETA_MAX_USERS: ${{ vars.BETA_MAX_USERS || '20' }}
+          BETA_MAX_TRACKS_PER_USER: ${{ vars.BETA_MAX_TRACKS_PER_USER || '3' }}
+          FEEDBACK_SIGNING_SECRET: ${{ secrets.FEEDBACK_SIGNING_SECRET }}
+          FEEDBACK_PAGE_URL: ${{ vars.FEEDBACK_PAGE_URL }}
+          FEEDBACK_API_URL: ${{ vars.FEEDBACK_API_URL }}
         run: |
           if [ -z "$SMTP_USERNAME" ] || [ -z "$SMTP_PASSWORD" ]; then
             if [ -z "$RESEND_API_KEY" ] || [ -z "$DIGEST_FROM" ]; then
@@ -49,10 +55,19 @@ jobs:
               exit 1
             fi
           fi
-          if [ -z "$DIGEST_TO" ]; then
-            echo "::error::Missing Actions secret: DIGEST_TO"
-            exit 1
-          fi
+          PYTHONPATH=src python - <<'PY'
+          from trend_tracker.config import Settings
+
+          settings = Settings.from_env()
+          users = settings.beta_users()
+          feedback_enabled = settings.feedback_enabled
+          if not users and not settings.digest_to:
+              raise SystemExit(
+                  "Configure DIGEST_TO for personal mode or at least one user in BETA_USERS_JSON"
+              )
+          print("Delivery mode:", "beta" if users else "personal")
+          print("Feedback:", "enabled" if feedback_enabled else "disabled")
+          PY
       - name: Refresh sources before digest
         env:
           PYTHONPATH: src
@@ -81,6 +96,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           TRACKS_JSON: ${{ secrets.TRACKS_JSON }}
+          BETA_USERS_JSON: ${{ secrets.BETA_USERS_JSON }}
+          BETA_MAX_USERS: ${{ vars.BETA_MAX_USERS || '20' }}
+          BETA_MAX_TRACKS_PER_USER: ${{ vars.BETA_MAX_TRACKS_PER_USER || '3' }}
+          FEEDBACK_SIGNING_SECRET: ${{ secrets.FEEDBACK_SIGNING_SECRET }}
+          FEEDBACK_PAGE_URL: ${{ vars.FEEDBACK_PAGE_URL }}
+          FEEDBACK_API_URL: ${{ vars.FEEDBACK_API_URL }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT }}

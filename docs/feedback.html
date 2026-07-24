@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>日报反馈</title>
+  <style>
+    :root{color-scheme:light;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    body{margin:0;background:#f4f6f8;color:#172033}.card{box-sizing:border-box;max-width:520px;margin:12vh auto;padding:36px 28px;background:#fff;border:1px solid #e6eaf0;border-radius:18px;box-shadow:0 18px 60px rgba(23,32,51,.09);text-align:center}
+    .mark{width:48px;height:48px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;background:#edf3ff;color:#2457d6;font-size:24px;font-weight:700}h1{font-size:22px;margin:0 0 10px}p{margin:0;color:#667085;line-height:1.7}.error .mark{background:#fff1f0;color:#d92d20}
+    @media(max-width:600px){.card{margin:0;min-height:100vh;border:0;border-radius:0;display:flex;flex-direction:column;justify-content:center}}
+  </style>
+</head>
+<body>
+  <main class="card" id="card">
+    <div class="mark" id="mark">…</div>
+    <h1 id="title">正在记录反馈</h1>
+    <p id="message">通常只需要一秒钟。</p>
+  </main>
+  <script>
+    const card = document.getElementById("card");
+    const mark = document.getElementById("mark");
+    const title = document.getElementById("title");
+    const message = document.getElementById("message");
+    const fail = (detail) => {
+      card.classList.add("error"); mark.textContent = "!";
+      title.textContent = "反馈未能记录";
+      message.textContent = detail || "链接可能已经失效，请返回日报后重试。";
+    };
+    (async () => {
+      const api = new URLSearchParams(location.search).get("api");
+      const token = decodeURIComponent(location.hash.slice(1));
+      history.replaceState(null, "", location.pathname);
+      if (!api || !token) return fail("反馈链接不完整。");
+      try {
+        const response = await fetch(api, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({token})
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error();
+        mark.textContent = "✓"; title.textContent = result.message;
+        message.textContent = "你的明确目标不会被自动改写；这次反馈会作为后续推荐的偏好信号。现在可以关闭本页。";
+      } catch (_) {
+        fail("网络异常或链接已经失效，请稍后重试。");
+      }
+    })();
+  </script>
+</body>
+</html>

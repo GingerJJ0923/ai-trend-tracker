@@ -1,9 +1,11 @@
 import base64
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -79,6 +81,12 @@ class Settings:
     ranking_model: str
     analysis_model: str
     tracks_json: str
+    beta_users_json: str
+    beta_max_users: int
+    beta_max_tracks_per_user: int
+    feedback_signing_secret: str
+    feedback_page_url: str
+    feedback_api_url: str
     output_language: str
     report_timezone: str
     report_highlight_items: int
@@ -132,6 +140,14 @@ class Settings:
             ranking_model=ranking_model,
             analysis_model=analysis_model,
             tracks_json=os.environ.get("TRACKS_JSON", "[]"),
+            beta_users_json=os.environ.get("BETA_USERS_JSON", "[]"),
+            beta_max_users=max(1, env_int("BETA_MAX_USERS", 20)),
+            beta_max_tracks_per_user=max(
+                1, env_int("BETA_MAX_TRACKS_PER_USER", 3)
+            ),
+            feedback_signing_secret=os.environ.get("FEEDBACK_SIGNING_SECRET", ""),
+            feedback_page_url=os.environ.get("FEEDBACK_PAGE_URL", "").rstrip("/"),
+            feedback_api_url=os.environ.get("FEEDBACK_API_URL", "").rstrip("/"),
             output_language=os.environ.get("OUTPUT_LANGUAGE", "zh-CN"),
             report_timezone=os.environ.get("REPORT_TIMEZONE", "Asia/Shanghai"),
             report_highlight_items=max(
@@ -188,3 +204,106 @@ class Settings:
             if isinstance(row, dict) and row.get("name") and row.get("goal"):
                 result.append({"name": str(row["name"]), "goal": str(row["goal"])})
         return result
+
+    def beta_users(self) -> List[Dict[str, Any]]:
+        """Parse the owner-managed invite list for the small design-partner beta."""
+        try:
+            data = json.loads(self.beta_users_json or "[]")
+        except json.JSONDecodeError as exc:
+            raise ValueError("BETA_USERS_JSON is invalid JSON") from exc
+        if not isinstance(data, list):
+            raise ValueError("BETA_USERS_JSON must be a JSON array")
+        if len(data) > self.beta_max_users:
+            raise ValueError(
+                "BETA_USERS_JSON has {0} users, above BETA_MAX_USERS={1}".format(
+                    len(data), self.beta_max_users
+                )
+            )
+        result: List[Dict[str, Any]] = []
+        seen_emails = set()
+        wechat_users = 0
+        for index, row in enumerate(data):
+            if not isinstance(row, dict):
+                raise ValueError("BETA_USERS_JSON row {0} must be an object".format(index + 1))
+            email = str(row.get("email") or "").strip().lower()
+            if not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+", email):
+                raise ValueError("BETA_USERS_JSON row {0} has an invalid email".format(index + 1))
+            if email in seen_emails:
+                raise ValueError(
+                    "BETA_USERS_JSON row {0} duplicates an earlier email".format(
+                        index + 1
+                    )
+                )
+            seen_emails.add(email)
+            tracks = []
+            seen_track_names = set()
+            for track in row.get("tracks") or []:
+                if isinstance(track, dict) and track.get("name") and track.get("goal"):
+                    track_name = str(track["name"]).strip()
+                    if track_name in seen_track_names:
+                        raise ValueError(
+                            "BETA_USERS_JSON row {0} has duplicate Track names".format(
+                                index + 1
+                            )
+                        )
+                    seen_track_names.add(track_name)
+                    tracks.append(
+                        {
+                            "name": track_name,
+                            "goal": str(track["goal"]).strip(),
+                        }
+                    )
+            if not tracks:
+                raise ValueError(
+                    "BETA_USERS_JSON row {0} must have at least one Track".format(
+                        index + 1
+                    )
+                )
+            if len(tracks) > self.beta_max_tracks_per_user:
+                raise ValueError(
+                    "BETA_USERS_JSON row {0} has {1} Tracks, above "
+                    "BETA_MAX_TRACKS_PER_USER={2}".format(
+                        index + 1, len(tracks), self.beta_max_tracks_per_user
+                    )
+                )
+            timezone_name = str(
+                row.get("timezone") or self.report_timezone
+            ).strip()
+            try:
+                ZoneInfo(timezone_name)
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    "BETA_USERS_JSON row {0} has an invalid timezone".format(
+                        index + 1
+                    )
+                ) from exc
+            result.append(
+                {
+                    "email": email,
+                    "display_name": str(row.get("display_name") or "").strip(),
+                    "timezone": timezone_name,
+                    "wechat_enabled": row.get("wechat_enabled") is True,
+                    "tracks": tracks,
+                }
+            )
+            if row.get("wechat_enabled") is True:
+                wechat_users += 1
+        if wechat_users > 1:
+            raise ValueError(
+                "BETA_USERS_JSON may enable WeChat for at most one owner account"
+            )
+        return result
+
+    @property
+    def feedback_enabled(self) -> bool:
+        values = (
+            self.feedback_signing_secret,
+            self.feedback_page_url,
+            self.feedback_api_url,
+        )
+        if any(values) and not all(values):
+            raise ValueError(
+                "FEEDBACK_SIGNING_SECRET, FEEDBACK_PAGE_URL and FEEDBACK_API_URL "
+                "must be configured together"
+            )
+        return all(values)
