@@ -362,6 +362,65 @@ class ConfigTests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old)
 
+    def test_repairs_common_beta_users_json_copy_paste_errors(self):
+        old = os.environ.copy()
+        try:
+            os.environ["BETA_USERS_JSON"] = """
+            [
+              {
+                “email”: “friend@example.com”，
+                “display_name”: “朋友”，
+                “tracks”: [
+                  {
+                    “name”: “AI Coding”
+                    “goal”: “关注新工具”，
+                  }，
+                ]，
+              }
+              {
+                “email”: “second@example.com”，
+                “tracks”: [
+                  {
+                    “name”: “AI 产品”，
+                    “goal”: “关注产品信号”
+                  }
+                ]
+              }
+            ]
+            """
+            settings = Settings.from_env()
+            users = settings.beta_users()
+            self.assertEqual(
+                [user["email"] for user in users],
+                ["friend@example.com", "second@example.com"],
+            )
+            self.assertEqual(users[0]["tracks"][0]["goal"], "关注新工具")
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_invalid_beta_users_json_reports_location_without_content(self):
+        old = os.environ.copy()
+        try:
+            os.environ["BETA_USERS_JSON"] = """
+            [
+              {
+                "email": "private@example.com",
+                "tracks": @
+              }
+            ]
+            """
+            settings = Settings.from_env()
+            with self.assertRaises(ValueError) as context:
+                settings.beta_users()
+            message = str(context.exception)
+            self.assertIn("near line", message)
+            self.assertIn("column", message)
+            self.assertNotIn("private@example.com", message)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
     def test_legacy_openai_configuration_remains_supported(self):
         old = os.environ.copy()
         try:

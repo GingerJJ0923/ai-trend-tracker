@@ -36,6 +36,136 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_json_punctuation(value: str) -> str:
+    """Normalize common Chinese JSON punctuation without changing string content."""
+    result: List[str] = []
+    in_string = False
+    quote_end = ""
+    escaped = False
+    for char in value.lstrip("\ufeff"):
+        if in_string:
+            if escaped:
+                result.append(char)
+                escaped = False
+            elif char == "\\":
+                result.append(char)
+                escaped = True
+            elif char == quote_end:
+                result.append('"')
+                in_string = False
+                quote_end = ""
+            elif quote_end == "”" and char == '"':
+                result.append('\\"')
+            else:
+                result.append(char)
+            continue
+
+        if char == '"':
+            result.append(char)
+            in_string = True
+            quote_end = '"'
+        elif char == "“":
+            result.append('"')
+            in_string = True
+            quote_end = "”"
+        elif char == "，":
+            result.append(",")
+        elif char == "：":
+            result.append(":")
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def _remove_trailing_json_commas(value: str) -> str:
+    """Remove commas immediately before a closing object or array token."""
+    result: List[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+        if char == ",":
+            next_index = index + 1
+            while next_index < len(value) and value[next_index].isspace():
+                next_index += 1
+            if next_index < len(value) and value[next_index] in "}]":
+                index += 1
+                continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def parse_json_setting(value: str, name: str) -> Any:
+    """Parse a JSON setting and repair only common, unambiguous copy/paste errors."""
+    raw_value = value or "[]"
+    try:
+        return json.loads(raw_value)
+    except json.JSONDecodeError:
+        repaired = _remove_trailing_json_commas(
+            _normalize_json_punctuation(raw_value)
+        )
+
+    # A missing comma is unambiguous when the decoder stops at the start of
+    # another key/object after a complete JSON value. Repair several omissions
+    # so a hand-edited beta list does not take the whole digest offline.
+    last_error: json.JSONDecodeError | None = None
+    for _ in range(20):
+        try:
+            parsed = json.loads(repaired)
+            print(
+                "WARNING: {0} contained common JSON formatting issues; "
+                "safe syntax repairs were applied.".format(name)
+            )
+            return parsed
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            if exc.msg != "Expecting ',' delimiter":
+                break
+            current_index = exc.pos
+            previous_index = current_index - 1
+            while previous_index >= 0 and repaired[previous_index].isspace():
+                previous_index -= 1
+            if previous_index < 0 or current_index >= len(repaired):
+                break
+            previous_char = repaired[previous_index]
+            current_char = repaired[current_index]
+            completed_value = (
+                previous_char in {'"', "}", "]"}
+                or previous_char.isdigit()
+            )
+            starts_next_value = current_char in {'"', "{", "["}
+            if not (completed_value and starts_next_value):
+                break
+            repaired = repaired[:current_index] + "," + repaired[current_index:]
+
+    assert last_error is not None
+    raise ValueError(
+        "{0} is invalid JSON near line {1}, column {2}. "
+        "Check the comma or punctuation immediately before that position.".format(
+            name,
+            last_error.lineno,
+            last_error.colno,
+        )
+    ) from last_error
+
+
 def supabase_key_role(key: str) -> str:
     """Return the privilege type encoded by a Supabase API key."""
     if key.startswith("sb_secret_"):
@@ -193,10 +323,7 @@ class Settings:
         return data
 
     def seed_tracks(self) -> List[Dict[str, str]]:
-        try:
-            data = json.loads(self.tracks_json or "[]")
-        except json.JSONDecodeError as exc:
-            raise ValueError("TRACKS_JSON is invalid JSON") from exc
+        data = parse_json_setting(self.tracks_json, "TRACKS_JSON")
         if not isinstance(data, list):
             raise ValueError("TRACKS_JSON must be a JSON array")
         result = []
@@ -207,10 +334,7 @@ class Settings:
 
     def beta_users(self) -> List[Dict[str, Any]]:
         """Parse the owner-managed invite list for the small design-partner beta."""
-        try:
-            data = json.loads(self.beta_users_json or "[]")
-        except json.JSONDecodeError as exc:
-            raise ValueError("BETA_USERS_JSON is invalid JSON") from exc
+        data = parse_json_setting(self.beta_users_json, "BETA_USERS_JSON")
         if not isinstance(data, list):
             raise ValueError("BETA_USERS_JSON must be a JSON array")
         if len(data) > self.beta_max_users:
