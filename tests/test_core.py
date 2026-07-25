@@ -555,6 +555,24 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('id="highlights"', rendered)
         self.assertIn('id="trends"', rendered)
 
+    def test_email_html_uses_dark_signal_radar_product_shell(self):
+        rendered = markdown_email_html(
+            "# AI 趋势日报\n\n"
+            "## 30 秒结论\n\n"
+            "- **建议动作：** 立即测试\n\n"
+            "## 今日重点情报\n\n"
+            "### 企业 Agent\n\n"
+            "#### 1. [评测工具](https://example.com/tool)｜高度相关\n\n"
+            "- **是什么：** 一个工具"
+        )
+        self.assertIn('bgcolor="#050b13"', rendered)
+        self.assertIn('class="brand-name"', rendered)
+        self.assertIn(">SIGNAL RADAR</span>", rendered)
+        self.assertIn('class="content-section section-conclusion"', rendered)
+        self.assertIn('class="signal-card"', rendered)
+        self.assertNotIn("background:#f4f6f8", rendered)
+        self.assertIn("一个工具", rendered)
+
     def test_splits_multiple_email_recipients(self):
         self.assertEqual(
             email_recipients("personal@qq.com; work@example.com,third@example.com"),

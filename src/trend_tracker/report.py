@@ -217,9 +217,32 @@ def _inline_markdown(value: str) -> str:
 
 
 def markdown_email_html(report: str) -> str:
-    """Render the digest's small Markdown subset as a readable email."""
+    """Render the digest's small Markdown subset as a dark, email-safe product UI."""
     blocks = []
     list_open = False
+    section_open = False
+    card_open = False
+
+    def close_list() -> None:
+        nonlocal list_open
+        if list_open:
+            blocks.append("</ul>")
+            list_open = False
+
+    def close_card() -> None:
+        nonlocal card_open
+        close_list()
+        if card_open:
+            blocks.append("</div>")
+            card_open = False
+
+    def close_section() -> None:
+        nonlocal section_open
+        close_card()
+        if section_open:
+            blocks.append("</section>")
+            section_open = False
+
     for raw_line in report.splitlines():
         line = raw_line.strip()
         if line.startswith("- "):
@@ -228,42 +251,90 @@ def markdown_email_html(report: str) -> str:
                 list_open = True
             blocks.append("<li>{0}</li>".format(_inline_markdown(line[2:])))
             continue
-        if list_open:
-            blocks.append("</ul>")
-            list_open = False
+        close_list()
         if not line:
             continue
         if line.startswith("# "):
+            close_section()
             blocks.append("<h1>{0}</h1>".format(_inline_markdown(line[2:])))
         elif line.startswith("## "):
+            close_section()
             title = line[3:]
             section_ids = {
                 "今日重点情报": "highlights",
                 "趋势雷达": "trends",
                 "其他相关信号": "related",
             }
+            section_classes = {
+                "30 秒结论": "section-conclusion",
+                "今日重点情报": "section-highlights",
+                "趋势雷达": "section-trends",
+                "其他相关信号": "section-related",
+            }
+            blocks.append(
+                '<section class="content-section {0}">'.format(
+                    section_classes.get(title, "")
+                )
+            )
+            section_open = True
             section_id = section_ids.get(title, "")
             id_attribute = ' id="{0}"'.format(section_id) if section_id else ""
             blocks.append("<h2{0}>{1}</h2>".format(id_attribute, _inline_markdown(title)))
         elif line.startswith("### "):
+            close_card()
             blocks.append("<h3>{0}</h3>".format(_inline_markdown(line[4:])))
         elif line.startswith("#### "):
+            close_card()
+            blocks.append('<div class="signal-card">')
+            card_open = True
             blocks.append("<h4>{0}</h4>".format(_inline_markdown(line[5:])))
         elif line.startswith("> "):
             blocks.append("<div class=\"meta\">{0}</div>".format(_inline_markdown(line[2:])))
         else:
             blocks.append("<p>{0}</p>".format(_inline_markdown(line)))
-    if list_open:
-        blocks.append("</ul>")
+    close_section()
     content = "\n".join(blocks)
     return """<!doctype html>
-<html><head><meta charset="utf-8"><style>
-body{margin:0;background:#f4f6f8;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.65}
-.wrap{max-width:720px;margin:0 auto;padding:28px 18px}.paper{background:#fff;border:1px solid #e8ebf0;border-radius:16px;padding:30px;box-shadow:0 8px 30px rgba(28,39,60,.06)}
-h1{font-size:27px;line-height:1.3;margin:0 0 14px;color:#101828}h2{font-size:20px;margin:32px 0 14px;padding-top:22px;border-top:1px solid #edf0f4;color:#15213a}h3{font-size:17px;margin:24px 0 10px;color:#243b67}h4{font-size:16px;margin:20px 0 8px;color:#1f3155}
-p{margin:8px 0}.meta{margin:12px 0 18px;padding:12px 15px;border-radius:10px;background:#f0f5ff;color:#3c4e72}ul{margin:8px 0 14px;padding-left:22px}li{margin:7px 0}
-a{color:#2457d6;text-decoration:none;font-weight:600}.meta a{display:inline-block;margin:3px 4px 3px 0;padding:5px 9px;border:1px solid #cdd9f2;border-radius:999px;background:#fff}strong{color:#101828}@media(max-width:600px){.wrap{padding:0}.paper{border-radius:0;border:0;padding:22px 18px}}
-</style></head><body><div class="wrap"><div class="paper">__DIGEST_CONTENT__</div></div></body></html>""".replace("__DIGEST_CONTENT__", content)
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
+<title>AI 趋势日报</title>
+<style>
+html,body{margin:0!important;padding:0!important;width:100%!important;background:#050b13!important;color:#dce9f3!important}
+body,table,td,p,a,li,h1,h2,h3,h4{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif}
+table{border-collapse:separate;border-spacing:0}a{color:#5ddcff;text-decoration:none;font-weight:650}strong{color:#f4f9fd}
+.email-shell{width:100%;background:#050b13}.email-outer{padding:28px 14px 42px}.email-container{width:100%;max-width:720px;background:#081321;border:1px solid #193047;border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34)}
+.brand-bar{padding:18px 28px;border-bottom:1px solid #193047;background:#07111e}.brand-mark{display:inline-block;width:8px;height:8px;margin-right:9px;border-radius:50%;background:#4ed9ff;box-shadow:0 0 12px #4ed9ff;vertical-align:1px}.brand-name{color:#8ceaff;font-size:12px;font-weight:800;letter-spacing:.16em}.brand-note{float:right;color:#526d82;font-size:10px;font-weight:500;letter-spacing:.06em}
+.email-content{padding:30px 30px 22px;color:#9fb3c3;font-size:14px;line-height:1.75;mso-line-height-rule:exactly}
+h1{margin:0 0 16px;color:#f5f9fc;font-size:28px;line-height:1.32;letter-spacing:-.035em}h2{margin:0 0 17px;color:#eef7fc;font-size:20px;line-height:1.4;letter-spacing:-.02em}h3{margin:24px 0 11px;color:#91e7ff;font-size:16px;line-height:1.45}h4{margin:0 0 13px;color:#eef8fd;font-size:16px;line-height:1.5}
+p{margin:8px 0;color:#96aabd}.content-section{margin:30px 0 0;padding-top:26px;border-top:1px solid #193047}.section-conclusion{margin:20px 0 0;padding:24px 24px 22px;border:1px solid #20506a;border-radius:14px;background:#0b1c2c}.section-conclusion h2{color:#73e2ff}.section-conclusion ul{margin-bottom:0}.section-conclusion li{padding:7px 0;border-bottom:1px solid #163247}.section-conclusion li:last-child{border-bottom:0}
+.meta{margin:11px 0 16px;padding:12px 14px;border:1px solid #193b54;border-radius:10px;background:#0b1b2a;color:#7695aa;font-size:12px}.meta a{display:inline-block;margin:3px 3px 3px 0;padding:5px 9px;border:1px solid #23516b;border-radius:999px;background:#0d2436;color:#70defa;font-size:11px;white-space:nowrap}
+.signal-card{margin:12px 0 16px;padding:20px 20px 17px;border:1px solid #19364e;border-radius:13px;background:#0a1827}.signal-card:hover{border-color:#2d627e}.signal-card .meta{margin:14px 0 0;background:#0c2132}.signal-card .meta a{border-color:#2c6079;background:#0e293c}.signal-card ul{margin-top:10px}.signal-card li{padding:4px 0}
+ul{margin:8px 0 15px;padding:0 0 0 20px}li{margin:5px 0;color:#9fb3c3}.section-related ul{margin-top:5px}.section-related li{margin:0;padding:10px 0;border-bottom:1px solid #142b3e}.section-related li:last-child{border-bottom:0}
+.section-trends p{padding:15px 17px;border:1px solid #173247;border-radius:10px;background:#091725;color:#9eb3c3}.section-trends strong{color:#71dfff}
+.email-footer{height:16px;border-top:1px solid #13293c;background:#07111d}
+@media only screen and (max-width:600px){
+.email-outer{padding:0!important}.email-container{border-right:0!important;border-left:0!important;border-radius:0!important}.brand-bar{padding:15px 18px!important}.brand-note{display:none!important}.email-content{padding:24px 18px 18px!important;font-size:14px!important}.section-conclusion{padding:20px 17px!important}.signal-card{padding:18px 16px 15px!important}h1{font-size:24px!important}h2{font-size:19px!important}h4{font-size:15px!important}.meta a{padding:6px 9px!important}
+}
+</style>
+</head>
+<body style="margin:0;padding:0;background:#050b13;color:#dce9f3">
+<table role="presentation" class="email-shell" width="100%" bgcolor="#050b13">
+<tr><td class="email-outer" align="center" style="padding:28px 14px 42px">
+<table role="presentation" class="email-container" width="100%" bgcolor="#081321" style="width:100%;max-width:720px;background:#081321;border:1px solid #193047;border-radius:18px">
+<tr><td class="brand-bar" style="padding:18px 28px;border-bottom:1px solid #193047;background:#07111e">
+<span class="brand-mark" style="display:inline-block;width:8px;height:8px;margin-right:9px;border-radius:50%;background:#4ed9ff"></span><span class="brand-name" style="color:#8ceaff;font-size:12px;font-weight:800;letter-spacing:.16em">SIGNAL RADAR</span><span class="brand-note">PERSONAL AI INTELLIGENCE</span>
+</td></tr>
+<tr><td class="email-content" style="padding:30px 30px 22px;color:#9fb3c3;font-size:14px;line-height:1.75">__DIGEST_CONTENT__</td></tr>
+<tr><td class="email-footer" height="16" style="height:16px;border-top:1px solid #13293c;background:#07111d">&nbsp;</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>""".replace("__DIGEST_CONTENT__", content)
 
 
 def send_email(http: HttpClient, api_key: str, sender: str, recipient: str, subject: str, report: str) -> None:
