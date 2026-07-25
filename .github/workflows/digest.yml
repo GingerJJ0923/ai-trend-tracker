@@ -36,15 +36,15 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Validate delivery configuration
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}
-          BETA_USERS_JSON: ${{ secrets.BETA_USERS_JSON }}
-          BETA_MAX_USERS: ${{ vars.BETA_MAX_USERS || '20' }}
-          BETA_MAX_TRACKS_PER_USER: ${{ vars.BETA_MAX_TRACKS_PER_USER || '3' }}
           FEEDBACK_SIGNING_SECRET: ${{ secrets.FEEDBACK_SIGNING_SECRET }}
           FEEDBACK_PAGE_URL: ${{ vars.FEEDBACK_PAGE_URL }}
           FEEDBACK_API_URL: ${{ vars.FEEDBACK_API_URL }}
@@ -57,15 +57,26 @@ jobs:
           fi
           PYTHONPATH=src python - <<'PY'
           from trend_tracker.config import Settings
+          from trend_tracker.http import HttpClient
+          from trend_tracker.repository import SupabaseRepository
 
           settings = Settings.from_env()
-          users = settings.beta_users()
+          settings.require_supabase()
+          repository = SupabaseRepository(
+              settings.supabase_url, settings.supabase_key, HttpClient()
+          )
+          users = repository.get_beta_users()
+          beta_mode = bool(users) or repository.has_beta_users()
           feedback_enabled = settings.feedback_enabled
-          if not users and not settings.digest_to:
+          if not beta_mode and not settings.digest_to:
               raise SystemExit(
-                  "Configure DIGEST_TO for personal mode or at least one user in BETA_USERS_JSON"
+                  "Add an active beta user in Supabase, or configure DIGEST_TO "
+                  "for legacy personal mode"
               )
-          print("Delivery mode:", "beta" if users else "personal")
+          print("Delivery mode:", "Supabase beta" if beta_mode else "legacy personal")
+          print("Active beta users:", len(users))
+          if beta_mode and not users:
+              print("All beta users are paused; this run will send no digest.")
           print("Feedback:", "enabled" if feedback_enabled else "disabled")
           PY
       - name: Refresh sources before digest
@@ -96,7 +107,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           TRACKS_JSON: ${{ secrets.TRACKS_JSON }}
-          BETA_USERS_JSON: ${{ secrets.BETA_USERS_JSON }}
           BETA_MAX_USERS: ${{ vars.BETA_MAX_USERS || '20' }}
           BETA_MAX_TRACKS_PER_USER: ${{ vars.BETA_MAX_TRACKS_PER_USER || '3' }}
           FEEDBACK_SIGNING_SECRET: ${{ secrets.FEEDBACK_SIGNING_SECRET }}

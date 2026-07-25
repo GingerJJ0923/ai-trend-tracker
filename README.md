@@ -86,6 +86,15 @@ structured goals, feedback events, and digest exposure records. Once this code
 is deployed, migration 003 is required even if personal mode is retained,
 because the application reads the new Track columns.
 
+To manage beta recipients and Tracks directly in Supabase, then run:
+
+`supabase/migrations/004_supabase_managed_users.sql`
+
+Migration 004 normalizes and validates email/timezone fields, prevents more
+than one user from sharing the owner's WeChat delivery, and automatically
+clears stale compiled-goal and embedding data whenever a natural-language goal
+changes. Existing users, Tracks, digests, and feedback are preserved.
+
 All application tables use RLS without anonymous policies. GitHub Actions uses
 the server-side Supabase secret key; never expose that key in frontend code.
 
@@ -104,7 +113,7 @@ The code can live in a public repository. Store the following under
 | `CHAT_API_KEY` | recommended | DeepSeek, GLM, or another compatible Chat API key |
 | `EMBEDDING_API_KEY` | recommended | Compatible embedding API key; may equal the chat key |
 | `TRACKS_JSON` | recommended | Private JSON array of initial Tracks |
-| `BETA_USERS_JSON` | beta | Private invite list, email addresses, and natural-language Tracks |
+| `BETA_USERS_JSON` | one-time migration | Temporary legacy invite list; remove after importing it into Supabase |
 | `FEEDBACK_SIGNING_SECRET` | beta feedback | Random secret also configured in the Supabase Function |
 | `SMTP_USERNAME` | delivery | QQ mailbox used to send the digest |
 | `SMTP_PASSWORD` | delivery | QQ Mail SMTP authorization code, not the login password |
@@ -147,11 +156,11 @@ Example private `TRACKS_JSON`:
 [{"name":"AI 工作流","goal":"关注能够改善知识工作和软件工作流、现在即可测试的 AI 产品；排除缺少差异化能力的简单套壳产品。"}]
 ```
 
-### Invite the first design partners
+### Import existing design partners once
 
-Put this in the `BETA_USERS_JSON` Actions secret. It is the owner-managed source
-of truth during the concierge beta. Editing a natural-language `goal` and
-running Digest updates that user's goal and recompiles its matching brief.
+Supabase is the source of truth for beta recipients and Tracks. If you already
+created `BETA_USERS_JSON`, keep it temporarily and use it only for this one-time
+import:
 
 ```json
 [
@@ -181,19 +190,48 @@ running Digest updates that user's goal and recompiles its matching brief.
 ]
 ```
 
-When `BETA_USERS_JSON` is non-empty, beta mode takes precedence over
-`TRACKS_JSON`. Include your own address in the beta list if you also want a
-personal copy. Removing a person from the JSON does not delete historical data;
-the next run sets that person inactive and pauses delivery.
+After pushing this version:
+
+1. Run migration `004_supabase_managed_users.sql` in Supabase SQL Editor.
+2. Open GitHub **Actions → Import beta users into Supabase → Run workflow**.
+3. Confirm the workflow reports the expected active-user and active-Track
+   counts.
+4. Delete the `BETA_USERS_JSON` Actions secret. The scheduled Digest does not
+   read it anymore and therefore cannot overwrite later Supabase edits.
 
 At most one person may set `wechat_enabled` to `true`; that preserves the
 owner's existing ServerChan delivery without sending invitees' private digests
-to the owner's WeChat.
+to the owner's WeChat. Migration 004 enforces this in the database.
 
 This phase deliberately has no public signup, password, billing, or user-facing
 goal editor. The owner interviews and onboards a small number of users, then
-updates the secret. This keeps support and privacy manageable while validating
-digest quality and retention.
+updates Supabase through Table Editor. This keeps support and privacy manageable
+while validating digest quality and retention.
+
+### Manage users and Tracks without touching Secrets
+
+Use **Supabase → Table Editor**. None of these operations require a GitHub
+Secret change:
+
+- **Add a user safely:** create a `beta_users` row with `active=false`, copy its
+  generated `id`, create one or more `tracks` rows whose `beta_user_id` equals
+  that id, then set the user to `active=true`.
+- **Pause or resume delivery:** change only `beta_users.active`. Historical
+  digests and feedback remain intact. If every beta user is paused, the run
+  sends nothing and does not fall back to `DIGEST_TO`.
+- **Change an email:** edit `beta_users.email`. The migration trims and
+  lowercases it and rejects malformed values.
+- **Change a goal:** edit only `tracks.goal`. On the next Digest, the database
+  trigger clears the prior compiled goal/vector and the LLM rebuilds them.
+- **Pause one topic:** set `tracks.active=false`; set it back to `true` to
+  resume. Prefer pausing over deleting so history remains available.
+- **Add another topic:** insert a `tracks` row with the same `beta_user_id`.
+  Keep active-user and per-user Track counts within `BETA_MAX_USERS` and
+  `BETA_MAX_TRACKS_PER_USER`, which remain explicit cost guardrails.
+
+The daily workflow queries only active `beta_users`, then only active `tracks`
+owned by each user. An active user with no active Track is treated as a
+configuration error for that user; other users are still processed.
 
 ### Enable one-click feedback
 
@@ -276,9 +314,9 @@ model IDs in the provider console rather than editing source code.
 Run **Collect AI signals** once before **Generate AI trend digest**.
 
 Personal mode requires `DIGEST_TO` and one email provider. Beta mode uses each
-email in `BETA_USERS_JSON`, so `DIGEST_TO` may be empty. The free default is QQ
-SMTP through `SMTP_USERNAME` and `SMTP_PASSWORD`; Resend remains an optional
-fallback. `SERVERCHAN_SENDKEY` is optional and never used for ordinary beta
+active email in Supabase `beta_users`, so `DIGEST_TO` may be empty. The free
+default is QQ SMTP through `SMTP_USERNAME` and `SMTP_PASSWORD`; Resend remains
+an optional fallback. `SERVERCHAN_SENDKEY` is optional and never used for ordinary beta
 invitees. Put QQ and work addresses
 together in personal-mode `DIGEST_TO`, for example
 `name@qq.com,name@company.com`. In beta mode, ServerChan is used only for the
@@ -356,7 +394,7 @@ Safe to publish:
 Keep private:
 
 - API keys and Supabase secret keys
-- `TRACKS_JSON`, `BETA_USERS_JSON`, `FEEDBACK_SIGNING_SECRET`
+- `TRACKS_JSON`, temporary `BETA_USERS_JSON`, `FEEDBACK_SIGNING_SECRET`
 - email addresses, feedback, collected data, and digests
 - Actions artifacts containing personalized reports
 
@@ -393,7 +431,7 @@ select public.trend_tracker_storage_status();
 - Product merging is fingerprint-based, not full entity resolution.
 - Deep analysis currently uses collected metadata and links; it does not yet
   perform separate website research.
-- Goal editing is owner-managed through `BETA_USERS_JSON`; a self-service
+- Goal editing is owner-managed through private Supabase rows; a self-service
   authenticated frontend is deferred until the design-partner loop validates
   repeat usage.
 - X, Reddit, and LinkedIn are excluded due to access restrictions or cost.

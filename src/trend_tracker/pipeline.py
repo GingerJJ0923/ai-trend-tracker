@@ -93,6 +93,40 @@ def seed_tracks(settings: Settings) -> int:
     return created
 
 
+def import_beta_users(settings: Settings) -> int:
+    """One-time migration from the legacy GitHub Secret into Supabase."""
+    users = settings.beta_users()
+    if not users:
+        raise RuntimeError(
+            "BETA_USERS_JSON is empty. Add it temporarily, run this import once, "
+            "then remove the Secret."
+        )
+    settings.require_supabase()
+    repository = SupabaseRepository(
+        settings.supabase_url,
+        settings.supabase_key,
+        HttpClient(),
+    )
+    created = repository.seed_beta_users(users)
+    active_users = repository.get_beta_users()
+    active_tracks = sum(
+        len(repository.get_tracks(user.id)) for user in active_users
+    )
+    print(
+        "Imported {0} active beta users and {1} active Tracks into Supabase "
+        "({2} users newly created).".format(
+            len(active_users),
+            active_tracks,
+            created,
+        )
+    )
+    print(
+        "Supabase is now the daily source of truth. Remove BETA_USERS_JSON "
+        "from GitHub Actions Secrets after verifying these counts."
+    )
+    return len(active_users)
+
+
 def _ensure_embeddings(repository: SupabaseRepository, ai: AIService, tracks: List[Track], items: List[SourceItem]) -> None:
     if not ai.embeddings_enabled:
         return
@@ -392,13 +426,24 @@ def _process_digest(
 
 def digest(settings: Settings) -> str:
     http, repository, ai = make_services(settings)
-    beta_seeds = settings.beta_users()
-    if beta_seeds:
-        created = repository.seed_beta_users(beta_seeds)
-        print("Created {0} new beta users".format(created))
-        beta_users = repository.get_beta_users()
+    beta_users = repository.get_beta_users()
+    beta_mode = bool(beta_users) or repository.has_beta_users()
+    if len(beta_users) > settings.beta_max_users:
+        raise RuntimeError(
+            "Supabase has {0} active beta users, above BETA_MAX_USERS={1}. "
+            "Pause users or raise the explicit cost cap.".format(
+                len(beta_users),
+                settings.beta_max_users,
+            )
+        )
+    if beta_mode:
+        print(
+            "Delivery mode: Supabase beta ({0} active users)".format(
+                len(beta_users)
+            )
+        )
     else:
-        beta_users = []
+        print("Delivery mode: legacy personal")
         repository.seed_tracks(settings.seed_tracks())
 
     since = datetime.now(timezone.utc) - timedelta(hours=settings.lookback_hours)
@@ -407,10 +452,17 @@ def digest(settings: Settings) -> str:
     paths: List[str] = []
     failures: List[str] = []
 
-    if beta_users:
+    if beta_mode:
         for beta_user in beta_users:
             try:
                 tracks = repository.get_tracks(beta_user.id)
+                if len(tracks) > settings.beta_max_tracks_per_user:
+                    raise RuntimeError(
+                        "{0} active Tracks exceed BETA_MAX_TRACKS_PER_USER={1}".format(
+                            len(tracks),
+                            settings.beta_max_tracks_per_user,
+                        )
+                    )
                 paths.append(
                     _process_digest(
                         settings,
@@ -430,7 +482,8 @@ def digest(settings: Settings) -> str:
         tracks = repository.get_tracks()
         if not tracks:
             raise RuntimeError(
-                "No active Tracks. Configure TRACKS_JSON or BETA_USERS_JSON."
+                "No active Tracks. Add an active beta user and Track in Supabase, "
+                "or configure TRACKS_JSON + DIGEST_TO for legacy personal mode."
             )
         paths.append(
             _process_digest(settings, http, repository, ai, items, tracks)

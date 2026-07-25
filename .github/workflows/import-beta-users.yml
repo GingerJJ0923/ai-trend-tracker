@@ -1,0 +1,37 @@
+name: Import beta users into Supabase
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never change the recipient set while a digest is being generated.
+  group: ai-trend-digest
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Run tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+      - name: Replace Supabase beta configuration from the one-time import
+        env:
+          PYTHONPATH: src
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BETA_USERS_JSON: ${{ secrets.BETA_USERS_JSON }}
+          BETA_MAX_USERS: ${{ vars.BETA_MAX_USERS || '20' }}
+          BETA_MAX_TRACKS_PER_USER: ${{ vars.BETA_MAX_TRACKS_PER_USER || '3' }}
+          REPORT_TIMEZONE: "Asia/Shanghai"
+        run: python -m trend_tracker import-beta-users

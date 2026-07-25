@@ -13,12 +13,14 @@ from trend_tracker.connectors import collect_rss
 from trend_tracker.config import Settings, supabase_key_role
 from trend_tracker.feedback import feedback_url, sign_feedback_token, verify_feedback_token
 from trend_tracker.http import HttpClient
-from trend_tracker.models import MatchResult, SourceItem, Track
+from trend_tracker.models import BetaUser, MatchResult, SourceItem, Track
 from trend_tracker.pipeline import (
     _configured_delivery_channels,
     _deliver_report,
     _run_with_retries,
     deduplicate_observations,
+    digest,
+    import_beta_users,
 )
 from trend_tracker.report import build_report, email_recipients, markdown_email_html, send_email, send_smtp_email, send_wechat
 from trend_tracker.repository import SupabaseRepository
@@ -225,6 +227,125 @@ class PipelineTests(unittest.TestCase):
             settings, "invitee@example.com", allow_wechat=False
         )
         self.assertEqual(channels, ["email"])
+
+    @patch("trend_tracker.pipeline._process_digest", return_value="reports/user.md")
+    @patch("trend_tracker.pipeline.make_services")
+    def test_digest_reads_beta_users_from_supabase_without_legacy_json(
+        self, make_services, process_digest
+    ):
+        beta_user = BetaUser(
+            id="user-id",
+            email="friend@example.com",
+            display_name="朋友",
+            timezone="Asia/Shanghai",
+        )
+        track = Track(
+            id="track-id",
+            beta_user_id=beta_user.id,
+            name="AI 产品",
+            goal="关注新的 AI 产品",
+        )
+
+        class Repository:
+            def get_beta_users(self):
+                return [beta_user]
+
+            def has_beta_users(self):
+                return True
+
+            def get_recent_items(self, since):
+                return []
+
+            def get_tracks(self, beta_user_id=None):
+                self.beta_user_id = beta_user_id
+                return [track]
+
+            def cleanup(self):
+                return {}
+
+            def storage_status(self):
+                return {}
+
+            def seed_beta_users(self, users):
+                raise AssertionError("Daily digest must never import the legacy Secret")
+
+        repository = Repository()
+        make_services.return_value = (object(), repository, object())
+        settings = SimpleNamespace(
+            beta_max_users=20,
+            beta_max_tracks_per_user=3,
+            lookback_hours=30,
+        )
+        settings.beta_users = lambda: (_ for _ in ()).throw(
+            AssertionError("Daily digest must never parse BETA_USERS_JSON")
+        )
+
+        self.assertEqual(digest(settings), "reports/user.md")
+        self.assertEqual(repository.beta_user_id, beta_user.id)
+        process_digest.assert_called_once()
+
+    @patch("trend_tracker.pipeline._process_digest")
+    @patch("trend_tracker.pipeline.make_services")
+    def test_all_paused_beta_users_do_not_fall_back_to_personal_delivery(
+        self, make_services, process_digest
+    ):
+        class Repository:
+            def get_beta_users(self):
+                return []
+
+            def has_beta_users(self):
+                return True
+
+            def get_recent_items(self, since):
+                return []
+
+            def cleanup(self):
+                return {}
+
+            def storage_status(self):
+                return {}
+
+            def seed_tracks(self, tracks):
+                raise AssertionError("Paused beta must not fall back to personal mode")
+
+        make_services.return_value = (object(), Repository(), object())
+        settings = SimpleNamespace(
+            beta_max_users=20,
+            beta_max_tracks_per_user=3,
+            lookback_hours=30,
+        )
+
+        self.assertEqual(digest(settings), "")
+        process_digest.assert_not_called()
+
+    @patch("trend_tracker.pipeline.SupabaseRepository")
+    @patch("trend_tracker.pipeline.HttpClient")
+    def test_legacy_beta_import_is_explicit_and_reports_supabase_counts(
+        self, http_client, repository_class
+    ):
+        seeds = [
+            {
+                "email": "friend@example.com",
+                "tracks": [{"name": "AI 产品", "goal": "关注新产品"}],
+            }
+        ]
+        user = BetaUser(id="user-id", email="friend@example.com")
+        repository = repository_class.return_value
+        repository.seed_beta_users.return_value = 1
+        repository.get_beta_users.return_value = [user]
+        repository.get_tracks.return_value = [
+            Track(id="track-id", name="AI 产品", goal="关注新产品")
+        ]
+        settings = SimpleNamespace(
+            supabase_url="https://project.supabase.co",
+            supabase_key="sb_secret_example",
+            beta_users=lambda: seeds,
+            require_supabase=lambda: None,
+        )
+
+        self.assertEqual(import_beta_users(settings), 1)
+        repository.seed_beta_users.assert_called_once_with(seeds)
+        repository.get_tracks.assert_called_once_with(user.id)
 
 
 class FakeHttp(HttpClient):

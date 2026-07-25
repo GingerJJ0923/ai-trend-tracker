@@ -71,14 +71,8 @@ class SupabaseRepository:
 
     def seed_beta_users(self, users: Iterable[Dict[str, Any]]) -> int:
         users = list(users)
-        self._request(
-            "PATCH",
-            "beta_users",
-            {"active": "eq.true"},
-            {"active": False},
-            "return=minimal",
-        )
         created = 0
+        imported_user_ids = []
         for seed in users:
             rows = self._request(
                 "GET",
@@ -90,7 +84,6 @@ class SupabaseRepository:
                 "display_name": seed.get("display_name") or "",
                 "timezone": seed.get("timezone") or "Asia/Shanghai",
                 "wechat_enabled": bool(seed.get("wechat_enabled")),
-                "active": True,
             }
             if rows:
                 user_id = rows[0]["id"]
@@ -105,25 +98,47 @@ class SupabaseRepository:
                 inserted = self._request(
                     "POST",
                     "beta_users",
-                    payload=payload,
+                    payload={**payload, "active": False},
                     prefer="return=representation",
                 ) or []
                 if not inserted:
                     raise RuntimeError("Supabase did not return the beta user id")
                 user_id = inserted[0]["id"]
                 created += 1
+            imported_user_ids.append(str(user_id))
             self._seed_beta_tracks(str(user_id), seed.get("tracks") or [])
+
+        # Change active recipients only after every user and Track was imported.
+        # A failed one-time import therefore cannot pause the existing audience.
+        imported_user_id_set = set(imported_user_ids)
+        for user_id in imported_user_ids:
+            self._request(
+                "PATCH",
+                "beta_users",
+                {"id": "eq.{0}".format(user_id)},
+                {"active": True},
+                "return=minimal",
+            )
+        active_rows = self._request(
+            "GET",
+            "beta_users",
+            {"active": "eq.true", "select": "id"},
+        ) or []
+        for row in active_rows:
+            user_id = str(row["id"])
+            if user_id not in imported_user_id_set:
+                self._request(
+                    "PATCH",
+                    "beta_users",
+                    {"id": "eq.{0}".format(user_id)},
+                    {"active": False},
+                    "return=minimal",
+                )
         return created
 
     def _seed_beta_tracks(self, beta_user_id: str, tracks: Iterable[Dict[str, str]]) -> None:
         tracks = list(tracks)
-        self._request(
-            "PATCH",
-            "tracks",
-            {"beta_user_id": "eq.{0}".format(beta_user_id)},
-            {"active": False},
-            "return=minimal",
-        )
+        imported_track_ids = []
         for track in tracks:
             rows = self._request(
                 "GET",
@@ -136,7 +151,8 @@ class SupabaseRepository:
                 },
             ) or []
             if rows:
-                update_payload: Dict[str, Any] = {"active": True}
+                track_id = str(rows[0]["id"])
+                update_payload: Dict[str, Any] = {}
                 if rows[0].get("goal") != track["goal"]:
                     update_payload.update(
                         {
@@ -146,25 +162,59 @@ class SupabaseRepository:
                             "embedding": None,
                         }
                     )
-                self._request(
-                    "PATCH",
-                    "tracks",
-                    {"id": "eq.{0}".format(rows[0]["id"])},
-                    update_payload,
-                    "return=minimal",
-                )
+                if update_payload:
+                    self._request(
+                        "PATCH",
+                        "tracks",
+                        {"id": "eq.{0}".format(track_id)},
+                        update_payload,
+                        "return=minimal",
+                    )
+                imported_track_ids.append(track_id)
                 continue
-            self._request(
+            inserted = self._request(
                 "POST",
                 "tracks",
                 payload={
                     "beta_user_id": beta_user_id,
                     "name": track["name"],
                     "goal": track["goal"],
-                    "active": True,
+                    "active": False,
                 },
-                prefer="return=minimal",
+                prefer="return=representation",
+            ) or []
+            if not inserted:
+                raise RuntimeError("Supabase did not return the beta Track id")
+            imported_track_ids.append(str(inserted[0]["id"]))
+
+        imported_track_id_set = set(imported_track_ids)
+        for track_id in imported_track_ids:
+            self._request(
+                "PATCH",
+                "tracks",
+                {"id": "eq.{0}".format(track_id)},
+                {"active": True},
+                "return=minimal",
             )
+        active_rows = self._request(
+            "GET",
+            "tracks",
+            {
+                "beta_user_id": "eq.{0}".format(beta_user_id),
+                "active": "eq.true",
+                "select": "id",
+            },
+        ) or []
+        for row in active_rows:
+            track_id = str(row["id"])
+            if track_id not in imported_track_id_set:
+                self._request(
+                    "PATCH",
+                    "tracks",
+                    {"id": "eq.{0}".format(track_id)},
+                    {"active": False},
+                    "return=minimal",
+                )
 
     def get_beta_users(self) -> List[BetaUser]:
         rows = self._request(
@@ -186,6 +236,17 @@ class SupabaseRepository:
             )
             for row in rows
         ]
+
+    def has_beta_users(self) -> bool:
+        rows = self._request(
+            "GET",
+            "beta_users",
+            {
+                "select": "id",
+                "limit": 1,
+            },
+        ) or []
+        return bool(rows)
 
     def get_tracks(self, beta_user_id: Optional[str] = None) -> List[Track]:
         query: Dict[str, Any] = {

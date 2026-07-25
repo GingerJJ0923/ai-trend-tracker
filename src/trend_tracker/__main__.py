@@ -2,7 +2,7 @@ import argparse
 import sys
 
 from .config import Settings
-from .pipeline import collect, digest, seed_tracks
+from .pipeline import collect, digest, import_beta_users, seed_tracks
 
 
 def main() -> int:
@@ -12,6 +12,10 @@ def main() -> int:
     collect_parser.add_argument("--dry-run", action="store_true", help="Fetch and print samples without writing to Supabase")
     subparsers.add_parser("digest", help="Match recent items to Tracks and generate a digest")
     subparsers.add_parser("seed-tracks", help="Upsert TRACKS_JSON into Supabase")
+    subparsers.add_parser(
+        "import-beta-users",
+        help="One-time import of legacy BETA_USERS_JSON into Supabase",
+    )
     args = parser.parse_args()
     settings = Settings.from_env()
     try:
@@ -21,6 +25,8 @@ def main() -> int:
             digest(settings)
         elif args.command == "seed-tracks":
             seed_tracks(settings)
+        elif args.command == "import-beta-users":
+            import_beta_users(settings)
         return 0
     except Exception as exc:
         print("ERROR: {0}".format(exc), file=sys.stderr)
@@ -29,4 +35,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
