@@ -213,15 +213,76 @@ def _inline_markdown(value: str) -> str:
         position = match.end()
     parts.append(html.escape(value[position:]))
     rendered = "".join(parts)
-    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", rendered)
+    rendered = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", rendered)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", rendered)
+
+
+def _digest_stats(value: str) -> str:
+    match = re.fullmatch(
+        r"今日扫描 \*\*(\d+)\*\* 条信息 · 发现相关 \*\*(\d+)\*\* 条 · "
+        r"重点解读 \*\*(\d+)\*\* 条 · 深度分析 \*\*(\d+)\*\* 条",
+        value,
+    )
+    if not match:
+        return '<div class="meta">{0}</div>'.format(_inline_markdown(value))
+    metrics = (
+        ("今日扫描", match.group(1), "条信息"),
+        ("相关信号", match.group(2), "条"),
+        ("重点解读", match.group(3), "条"),
+        ("深度分析", match.group(4), "条"),
+    )
+    cells = []
+    for label, number, unit in metrics:
+        cells.append(
+            '<td class="metric-cell" width="25%">'
+            '<span class="metric-label">{0}</span>'
+            '<strong class="metric-value">{1}</strong>'
+            '<span class="metric-unit">{2}</span>'
+            "</td>".format(label, number, unit)
+        )
+    return (
+        '<table role="presentation" class="digest-stats" width="100%">'
+        "<tr>{0}</tr></table>".format("".join(cells))
+    )
+
+
+def _signal_heading(value: str) -> str:
+    ordinal = ""
+    heading = value
+    ordinal_match = re.match(r"^(\d+)\.\s+(.+)$", value)
+    if ordinal_match:
+        ordinal = ordinal_match.group(1).zfill(2)
+        heading = ordinal_match.group(2)
+    tier = ""
+    if "｜" in heading:
+        heading, tier = heading.rsplit("｜", 1)
+    index = (
+        '<span class="signal-index">{0}</span>'.format(ordinal)
+        if ordinal
+        else ""
+    )
+    badge = (
+        '<span class="signal-tier">{0}</span>'.format(_inline_markdown(tier))
+        if tier
+        else ""
+    )
+    return (
+        '<div class="signal-heading">{0}<h4>{1}</h4>{2}</div>'.format(
+            index,
+            _inline_markdown(heading),
+            badge,
+        )
+    )
 
 
 def markdown_email_html(report: str) -> str:
-    """Render the digest's small Markdown subset as a dark, email-safe product UI."""
+    """Render the digest as a restrained, email-safe night observatory UI."""
     blocks = []
     list_open = False
     section_open = False
     card_open = False
+    hero_open = False
+    meta_count = 0
 
     def close_list() -> None:
         nonlocal list_open
@@ -243,21 +304,40 @@ def markdown_email_html(report: str) -> str:
             blocks.append("</section>")
             section_open = False
 
+    def close_hero() -> None:
+        nonlocal hero_open
+        close_list()
+        if hero_open:
+            blocks.append("</header>")
+            hero_open = False
+
     for raw_line in report.splitlines():
         line = raw_line.strip()
         if line.startswith("- "):
             if not list_open:
                 blocks.append("<ul>")
                 list_open = True
-            blocks.append("<li>{0}</li>".format(_inline_markdown(line[2:])))
+            item = line[2:]
+            item_class = (
+                ' class="action-row"'
+                if item.startswith("**建议动作：**")
+                else ""
+            )
+            blocks.append(
+                "<li{0}>{1}</li>".format(item_class, _inline_markdown(item))
+            )
             continue
         close_list()
         if not line:
             continue
         if line.startswith("# "):
             close_section()
+            close_hero()
+            blocks.append('<header class="digest-hero">')
+            hero_open = True
             blocks.append("<h1>{0}</h1>".format(_inline_markdown(line[2:])))
         elif line.startswith("## "):
+            close_hero()
             close_section()
             title = line[3:]
             section_ids = {
@@ -287,11 +367,33 @@ def markdown_email_html(report: str) -> str:
             close_card()
             blocks.append('<div class="signal-card">')
             card_open = True
-            blocks.append("<h4>{0}</h4>".format(_inline_markdown(line[5:])))
+            blocks.append(_signal_heading(line[5:]))
         elif line.startswith("> "):
-            blocks.append("<div class=\"meta\">{0}</div>".format(_inline_markdown(line[2:])))
+            meta_value = line[2:]
+            if meta_count == 0:
+                blocks.append(_digest_stats(meta_value))
+            elif card_open:
+                blocks.append(
+                    '<div class="meta feedback-bar">{0}</div>'.format(
+                        _inline_markdown(meta_value)
+                    )
+                )
+            elif "#highlights" in meta_value:
+                blocks.append(
+                    '<nav class="meta digest-nav">{0}</nav>'.format(
+                        _inline_markdown(meta_value)
+                    )
+                )
+            else:
+                blocks.append(
+                    '<div class="meta">{0}</div>'.format(
+                        _inline_markdown(meta_value)
+                    )
+                )
+            meta_count += 1
         else:
             blocks.append("<p>{0}</p>".format(_inline_markdown(line)))
+    close_hero()
     close_section()
     content = "\n".join(blocks)
     return """<!doctype html>
@@ -303,33 +405,39 @@ def markdown_email_html(report: str) -> str:
 <meta name="supported-color-schemes" content="dark">
 <title>AI 趋势日报</title>
 <style>
-html,body{margin:0!important;padding:0!important;width:100%!important;background:#050b13!important;color:#dce9f3!important}
-body,table,td,p,a,li,h1,h2,h3,h4{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif}
-table{border-collapse:separate;border-spacing:0}a{color:#5ddcff;text-decoration:none;font-weight:650}strong{color:#f4f9fd}
-.email-shell{width:100%;background:#050b13}.email-outer{padding:28px 14px 42px}.email-container{width:100%;max-width:720px;background:#081321;border:1px solid #193047;border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34)}
-.brand-bar{padding:18px 28px;border-bottom:1px solid #193047;background:#07111e}.brand-mark{display:inline-block;width:8px;height:8px;margin-right:9px;border-radius:50%;background:#4ed9ff;box-shadow:0 0 12px #4ed9ff;vertical-align:1px}.brand-name{color:#8ceaff;font-size:12px;font-weight:800;letter-spacing:.16em}.brand-note{float:right;color:#526d82;font-size:10px;font-weight:500;letter-spacing:.06em}
-.email-content{padding:30px 30px 22px;color:#9fb3c3;font-size:14px;line-height:1.75;mso-line-height-rule:exactly}
-h1{margin:0 0 16px;color:#f5f9fc;font-size:28px;line-height:1.32;letter-spacing:-.035em}h2{margin:0 0 17px;color:#eef7fc;font-size:20px;line-height:1.4;letter-spacing:-.02em}h3{margin:24px 0 11px;color:#91e7ff;font-size:16px;line-height:1.45}h4{margin:0 0 13px;color:#eef8fd;font-size:16px;line-height:1.5}
-p{margin:8px 0;color:#96aabd}.content-section{margin:30px 0 0;padding-top:26px;border-top:1px solid #193047}.section-conclusion{margin:20px 0 0;padding:24px 24px 22px;border:1px solid #20506a;border-radius:14px;background:#0b1c2c}.section-conclusion h2{color:#73e2ff}.section-conclusion ul{margin-bottom:0}.section-conclusion li{padding:7px 0;border-bottom:1px solid #163247}.section-conclusion li:last-child{border-bottom:0}
-.meta{margin:11px 0 16px;padding:12px 14px;border:1px solid #193b54;border-radius:10px;background:#0b1b2a;color:#7695aa;font-size:12px}.meta a{display:inline-block;margin:3px 3px 3px 0;padding:5px 9px;border:1px solid #23516b;border-radius:999px;background:#0d2436;color:#70defa;font-size:11px;white-space:nowrap}
-.signal-card{margin:12px 0 16px;padding:20px 20px 17px;border:1px solid #19364e;border-radius:13px;background:#0a1827}.signal-card:hover{border-color:#2d627e}.signal-card .meta{margin:14px 0 0;background:#0c2132}.signal-card .meta a{border-color:#2c6079;background:#0e293c}.signal-card ul{margin-top:10px}.signal-card li{padding:4px 0}
-ul{margin:8px 0 15px;padding:0 0 0 20px}li{margin:5px 0;color:#9fb3c3}.section-related ul{margin-top:5px}.section-related li{margin:0;padding:10px 0;border-bottom:1px solid #142b3e}.section-related li:last-child{border-bottom:0}
-.section-trends p{padding:15px 17px;border:1px solid #173247;border-radius:10px;background:#091725;color:#9eb3c3}.section-trends strong{color:#71dfff}
-.email-footer{height:16px;border-top:1px solid #13293c;background:#07111d}
+html,body{margin:0!important;padding:0!important;width:100%!important;background:#040912!important;color:#e7f1f6!important}
+body,table,td,p,a,li,h1,h2,h3,h4{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Arial,sans-serif}
+table{border-collapse:separate;border-spacing:0}a{color:#67d8f3;text-decoration:none;font-weight:650}a:hover{color:#a8ecfa}strong{color:#f3f8fb}code{padding:2px 5px;border:1px solid #1b3a4e;border-radius:4px;background:#071622;color:#86dff3;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+.email-shell{width:100%;background:#040912}.email-outer{padding:34px 14px 48px}.email-container{width:100%;max-width:700px;background:#07131f;border:1px solid #173348;border-radius:18px;overflow:hidden;box-shadow:0 28px 90px rgba(0,0,0,.4)}
+.brand-bar{padding:20px 28px 15px;border-bottom:1px solid #173348;background:#050e18}.brand-row{width:100%}.brand-identity{white-space:nowrap}.brand-orbit{display:inline-block;width:22px;height:22px;margin-right:10px;border:1px solid #2c7892;border-radius:50%;box-shadow:inset 0 0 10px rgba(103,216,243,.1);vertical-align:middle;text-align:center}.brand-mark{display:inline-block;width:6px;height:6px;margin-top:7px;border-radius:50%;background:#67d8f3;box-shadow:0 0 12px #67d8f3}.brand-name{color:#a5eafa;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;font-weight:800;letter-spacing:.17em;vertical-align:middle}.brand-note{color:#607a8d;font-size:10px;font-weight:500;letter-spacing:.04em}
+.signal-spectrum{height:18px;margin-top:13px;overflow:hidden;white-space:nowrap}.signal-spectrum span{display:inline-block;height:1px;margin-right:4px;background:#17384d;vertical-align:middle}.signal-spectrum .quiet{width:12%;}.signal-spectrum .short{width:5%;background:#25627c}.signal-spectrum .pulse{width:2px;height:11px;background:#67d8f3;box-shadow:0 0 8px rgba(103,216,243,.65)}.signal-spectrum .medium{width:18%;background:#20546d}.signal-spectrum .long{width:31%}.signal-spectrum .beacon{width:4px;height:4px;border-radius:50%;background:#8be5f6;box-shadow:0 0 8px rgba(103,216,243,.45)}
+.email-content{padding:0 32px 28px;color:#93a9b8;font-size:14px;line-height:1.78;mso-line-height-rule:exactly}.digest-hero{margin:0 -32px;padding:30px 32px 22px;border-bottom:1px solid #142f42;background:#081724}
+h1{margin:0 0 19px;color:#f4f8fa;font-family:"Avenir Next","SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;font-size:29px;font-weight:650;line-height:1.32;letter-spacing:-.035em}h2{margin:2px 0 18px;color:#edf5f8;font-family:"Avenir Next","SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;font-size:21px;font-weight:650;line-height:1.4;letter-spacing:-.025em}h3{margin:25px 0 12px;color:#9ddfeb;font-size:15px;font-weight:650;line-height:1.45}h4{display:inline;margin:0;color:#eff6f9;font-size:16px;font-weight:650;line-height:1.52}
+p{margin:9px 0;color:#91a7b6}.content-section{margin:34px 0 0;padding-top:29px;border-top:1px solid #173348}
+.digest-stats{margin:0 0 15px;border:1px solid #19384d;border-radius:10px;background:#07131f}.metric-cell{padding:12px 10px;border-right:1px solid #173348;text-align:center}.metric-cell:last-child{border-right:0}.metric-label{display:block;color:#5f7d90;font-size:9px}.metric-value{display:inline-block;margin-top:3px;color:#dff6fb;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:17px;font-weight:700}.metric-unit{margin-left:3px;color:#4f6c7e;font-size:8px}
+.meta{margin:12px 0 16px;padding:12px 14px;border:1px solid #19384d;border-radius:9px;background:#091a28;color:#718b9d;font-size:11px}.digest-nav{margin:0;padding:0;border:0;background:transparent;text-align:left}.digest-nav a{display:inline-block;margin:3px 6px 3px 0;padding:6px 10px;border:1px solid #1c4157;border-radius:7px;background:#0a1c2b;color:#79d9ee;font-size:10px;white-space:nowrap}
+.section-conclusion{position:relative;margin:28px 0 0;padding:23px 23px 19px;border:1px solid #244354;border-left:3px solid #67d8f3;border-radius:11px;background:#0a1b29}.section-conclusion h2{margin-bottom:13px;color:#dff6fb}.section-conclusion ul{margin-bottom:0}.section-conclusion li{padding:8px 0;border-bottom:1px solid #173447}.section-conclusion li:last-child{border-bottom:0}.section-conclusion .action-row{margin-top:3px;padding:10px 12px;border:1px solid #614a2f;border-radius:7px;background:#1a1817;color:#d8c3a8}.section-conclusion .action-row strong{color:#f2bf7d}
+.signal-card{margin:12px 0 18px;padding:20px 20px 18px;border:1px solid #17384d;border-radius:11px;background:#091824}.signal-heading{display:flex;align-items:flex-start;gap:10px;margin-bottom:13px}.signal-index{flex:0 0 auto;padding-top:2px;color:#4f8ba3;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}.signal-heading h4{flex:1}.signal-heading h4 a{color:#f0f6f8}.signal-tier{flex:0 0 auto;margin-top:2px;padding:3px 7px;border:1px solid #29576b;border-radius:999px;background:#0b2230;color:#7fd9ec;font-size:9px;white-space:nowrap}.signal-card ul{margin-top:9px}.signal-card li{padding:4px 0}.signal-card .action-row{margin:3px 0;padding:6px 9px;border-left:2px solid #b78350;color:#c4b49f}.signal-card .action-row strong{color:#e8b875}.signal-card .feedback-bar{margin:15px 0 0;border-color:#253f4c;background:#071723;color:#607c8e}.feedback-bar a{display:inline-block;margin:4px 4px 2px 0;padding:5px 9px;border:1px solid #254c5d;border-radius:6px;background:#0a202d;color:#79d9ed;font-size:10px}.feedback-bar a:last-child{border-color:#5b472f;background:#191714;color:#efb36b}
+ul{margin:8px 0 15px;padding:0 0 0 19px}li{margin:5px 0;color:#94aab9}.section-trends h3{color:#8fd9e8}.section-trends p{margin:8px 0 14px;padding:15px 16px;border-left:2px solid #376f86;background:#081824;color:#9bb0bd}.section-trends strong{color:#87dded}.section-related ul{margin-top:5px;padding-left:0;list-style:none}.section-related li{margin:0;padding:11px 0;border-bottom:1px solid #142d3e}.section-related li:last-child{border-bottom:0}.section-related li a{color:#c9e5eb}
+.email-footer{height:12px;border-top:1px solid #132d3e;background:#050e18}
 @media only screen and (max-width:600px){
-.email-outer{padding:0!important}.email-container{border-right:0!important;border-left:0!important;border-radius:0!important}.brand-bar{padding:15px 18px!important}.brand-note{display:none!important}.email-content{padding:24px 18px 18px!important;font-size:14px!important}.section-conclusion{padding:20px 17px!important}.signal-card{padding:18px 16px 15px!important}h1{font-size:24px!important}h2{font-size:19px!important}h4{font-size:15px!important}.meta a{padding:6px 9px!important}
+.email-outer{padding:0!important}.email-container{border-right:0!important;border-left:0!important;border-radius:0!important}.brand-bar{padding:16px 18px 13px!important}.brand-note{display:none!important}.email-content{padding:0 18px 20px!important;font-size:14px!important}.digest-hero{margin:0 -18px!important;padding:25px 18px 20px!important}.metric-cell{display:inline-block!important;width:50%!important;box-sizing:border-box!important;border-bottom:1px solid #173348!important}.section-conclusion{padding:20px 16px 17px!important}.signal-card{padding:17px 15px 15px!important}.signal-heading{display:block!important}.signal-index{display:inline-block!important;margin-right:8px!important}.signal-tier{display:inline-block!important;margin:9px 0 0!important}h1{font-size:24px!important}h2{font-size:19px!important}h4{font-size:15px!important}.digest-nav a,.feedback-bar a{padding:6px 9px!important}
 }
 </style>
 </head>
-<body style="margin:0;padding:0;background:#050b13;color:#dce9f3">
-<table role="presentation" class="email-shell" width="100%" bgcolor="#050b13">
-<tr><td class="email-outer" align="center" style="padding:28px 14px 42px">
-<table role="presentation" class="email-container" width="100%" bgcolor="#081321" style="width:100%;max-width:720px;background:#081321;border:1px solid #193047;border-radius:18px">
-<tr><td class="brand-bar" style="padding:18px 28px;border-bottom:1px solid #193047;background:#07111e">
-<span class="brand-mark" style="display:inline-block;width:8px;height:8px;margin-right:9px;border-radius:50%;background:#4ed9ff"></span><span class="brand-name" style="color:#8ceaff;font-size:12px;font-weight:800;letter-spacing:.16em">SIGNAL RADAR</span><span class="brand-note">PERSONAL AI INTELLIGENCE</span>
+<body style="margin:0;padding:0;background:#040912;color:#e7f1f6">
+<table role="presentation" class="email-shell" width="100%" bgcolor="#040912">
+<tr><td class="email-outer" align="center" style="padding:34px 14px 48px">
+<table role="presentation" class="email-container" width="100%" bgcolor="#07131f" style="width:100%;max-width:700px;background:#07131f;border:1px solid #173348;border-radius:18px">
+<tr><td class="brand-bar" style="padding:20px 28px 15px;border-bottom:1px solid #173348;background:#050e18">
+<table role="presentation" class="brand-row" width="100%"><tr>
+<td class="brand-identity"><span class="brand-orbit"><span class="brand-mark"></span></span><span class="brand-name">SIGNAL RADAR</span></td>
+<td align="right"><span class="brand-note">每日个性化 AI 情报</span></td>
+</tr></table>
+<div class="signal-spectrum" aria-hidden="true"><span class="quiet"></span><span class="short"></span><span class="pulse"></span><span class="medium"></span><span class="beacon"></span><span class="short"></span><span class="pulse"></span><span class="long"></span></div>
 </td></tr>
-<tr><td class="email-content" style="padding:30px 30px 22px;color:#9fb3c3;font-size:14px;line-height:1.75">__DIGEST_CONTENT__</td></tr>
-<tr><td class="email-footer" height="16" style="height:16px;border-top:1px solid #13293c;background:#07111d">&nbsp;</td></tr>
+<tr><td class="email-content" style="padding:0 32px 28px;color:#93a9b8;font-size:14px;line-height:1.78">__DIGEST_CONTENT__</td></tr>
+<tr><td class="email-footer" height="12" style="height:12px;border-top:1px solid #132d3e;background:#050e18">&nbsp;</td></tr>
 </table>
 </td></tr>
 </table>

@@ -679,6 +679,7 @@ class DeliveryTests(unittest.TestCase):
     def test_email_html_uses_dark_signal_radar_product_shell(self):
         rendered = markdown_email_html(
             "# AI 趋势日报\n\n"
+            "> 今日扫描 **120** 条信息 · 发现相关 **8** 条 · 重点解读 **3** 条 · 深度分析 **1** 条\n\n"
             "## 30 秒结论\n\n"
             "- **建议动作：** 立即测试\n\n"
             "## 今日重点情报\n\n"
@@ -686,9 +687,13 @@ class DeliveryTests(unittest.TestCase):
             "#### 1. [评测工具](https://example.com/tool)｜高度相关\n\n"
             "- **是什么：** 一个工具"
         )
-        self.assertIn('bgcolor="#050b13"', rendered)
+        self.assertIn('bgcolor="#040912"', rendered)
         self.assertIn('class="brand-name"', rendered)
         self.assertIn(">SIGNAL RADAR</span>", rendered)
+        self.assertIn('class="signal-spectrum"', rendered)
+        self.assertIn('class="digest-stats"', rendered)
+        self.assertIn('class="signal-index">01</span>', rendered)
+        self.assertIn("建议动作", rendered)
         self.assertIn('class="content-section section-conclusion"', rendered)
         self.assertIn('class="signal-card"', rendered)
         self.assertNotIn("background:#f4f6f8", rendered)
