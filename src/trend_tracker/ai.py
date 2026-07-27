@@ -289,8 +289,12 @@ class AIService:
             + self.language_instruction
             + "Follow that language regardless of the source or tracking-goal language. "
             "Keep official product, company, model, API, protocol and library names unchanged. "
-            "Use exactly these four bold labels without headings: **核心价值：**, **依据：**, **局限与风险：**, **建议动作：**. "
-            "The action must be specific and executable within 15-30 minutes. Do not repeat the product description or invent evidence. "
+            "Use exactly four bullet lines beginning with: **新在哪里：**, **判断依据：**, **适用边界：**, **先验证：**. "
+            "新在哪里 identifies the concrete new capability, approach, or decision value without repeating the product description. "
+            "判断依据 cites only concrete capabilities, documentation, metadata, or claims present in the supplied evidence. "
+            "适用边界 names a specific unsupported conclusion, missing proof, or scenario where applicability remains unclear. "
+            "先验证 starts with a verb and gives exactly one action executable within 15-30 minutes. "
+            "Do not repeat the concise product summary, relevance reason, or the same action across lines. Do not invent evidence. "
             "Keep the entire analysis within 260 Chinese characters."
         )
         user = json.dumps(
@@ -331,7 +335,12 @@ class AIService:
             + self.language_instruction
             + "Follow that language regardless of source language. "
             "Keep official product and technical names unchanged. Use exactly four bullet lines beginning with: "
-            "**趋势判断：**, **已确认信号：**, **不确定性：**, **建议关注：**. "
+            "**趋势判断：**, **判断依据：**, **尚待验证：**, **接下来观察：**. "
+            "趋势判断 states one grounded direction, contrast, or boundary shift. "
+            "判断依据 names concrete independent signals or shared features that support the judgment. "
+            "尚待验证 identifies the specific missing evidence or applicability boundary, not a generic uncertainty disclaimer. "
+            "接下来观察 names one observable event or evidence trigger that could strengthen or weaken the judgment. "
+            "Do not repeat the same claim across lines or use filler such as '持续关注'. "
             "Every claim must be grounded in supplied items, distinguish facts from inference, and avoid pretending to predict the future. "
             "Use at most 220 Chinese characters in total."
         )
@@ -357,6 +366,117 @@ class AIService:
             return str(response.get("summary", "")).strip()
         except Exception as exc:
             return "趋势研判生成失败：{0}".format(exc)
+
+    def daily_brief(
+        self,
+        tracks: List[Track],
+        matches_by_track: Dict[str, List[MatchResult]],
+        trends_by_track: Dict[str, str],
+    ) -> Dict[str, str]:
+        """Synthesize the three-line editorial judgment shown at the top."""
+        track_by_id = {track.id: track for track in tracks}
+        relevant = sorted(
+            [
+                match
+                for track in tracks
+                for match in matches_by_track.get(track.id, [])
+                if match.score >= 50
+            ],
+            key=lambda match: match.score,
+            reverse=True,
+        )[:12]
+        if not relevant:
+            return {}
+
+        featured = relevant[0]
+        featured_track = track_by_id[featured.track_id]
+        fallback = {
+            "today_change": "「{0}」出现新变化，{1}".format(
+                featured_track.name,
+                featured.reason
+                or "出现一条值得验证的新信号。",
+            ),
+            "why_it_matters": (
+                "它会影响你对「{0}」的选择与下一步判断。".format(
+                    featured_track.name
+                )
+            ),
+            "next_action": featured.next_action
+            or "阅读原始资料，再用一个真实任务验证。",
+        }
+        if not self.chat_enabled:
+            return fallback
+
+        system = (
+            "You are the chief editor of a personalized AI intelligence digest. "
+            "Synthesize a useful three-line decision brief from all supplied signals; never merely rewrite the highest-scoring item. "
+            "First look for a change supported by at least two meaningfully independent signals. "
+            "When the signals do not support one shared pattern, do not say that there is no consensus, no trend, or insufficient evidence. "
+            "Instead surface the most decision-relevant contrast, emerging opportunity, boundary shift, or isolated high-value change, "
+            "while staying explicit about what the evidence actually supports. "
+            "Return JSON only with exactly these string fields: today_change, why_it_matters, next_action. "
+            + self.language_instruction
+            + "Keep official product and technical names unchanged. "
+            "Write each field as one compact, natural Chinese sentence with no internal heading or colon. "
+            "today_change must state the subject and the key change, contrast, or evidence boundary instead of repeating a product title, within 45 Chinese characters. "
+            "why_it_matters must name the user's concrete goal or decision affected by that change, within 45 Chinese characters; avoid generic claims such as '值得关注' or '可能有影响'. "
+            "next_action must start with a verb and give exactly one low-cost action executable today, within 32 Chinese characters. "
+            "The three fields must not repeat the same claim. Remove filler such as '建议进一步了解', '持续关注', or '等待更多信息'. "
+            "Do not invent facts, adoption, causality, comparisons, or future outcomes."
+        )
+        payload = {
+            "tracks": [
+                {
+                    "id": track.id,
+                    "name": track.name,
+                    "raw_goal": track.goal,
+                    "matching_brief": track.matching_goal(),
+                }
+                for track in tracks
+            ],
+            "signals": [
+                {
+                    "id": match.item_id,
+                    "track_id": match.track_id,
+                    "title": match.display_title or match.item.title,
+                    "summary": match.concise_summary or match.item.summary[:600],
+                    "source": match.item.source_key,
+                    "score": match.score,
+                    "relevance_reason": match.reason,
+                    "analysis": match.analysis[:1000],
+                    "suggested_action": match.next_action,
+                }
+                for match in relevant
+            ],
+            "track_trend_summaries": {
+                track.id: trends_by_track.get(track.id, "") for track in tracks
+            },
+        }
+        try:
+            response = self._chat_json(
+                self.analysis_model,
+                system,
+                json.dumps(payload, ensure_ascii=False),
+            )
+            brief = {
+                "today_change": str(response.get("today_change") or "").strip(),
+                "why_it_matters": str(response.get("why_it_matters") or "").strip(),
+                "next_action": str(response.get("next_action") or "").strip(),
+            }
+            empty_conclusions = (
+                "未形成共识",
+                "没有共识",
+                "无明显共识",
+                "未形成趋势",
+                "没有趋势",
+                "无明显趋势",
+                "证据不足",
+            )
+            if any(phrase in brief["today_change"] for phrase in empty_conclusions):
+                return fallback
+            return brief if all(brief.values()) else fallback
+        except Exception:
+            return fallback
 
 
 def candidate_scores(track: Track, items: List[SourceItem]) -> List[Tuple[SourceItem, float]]:

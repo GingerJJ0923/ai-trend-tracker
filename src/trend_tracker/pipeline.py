@@ -373,6 +373,7 @@ def _process_digest(
         matches_by_track[track.id] = matches
         trends_by_track[track.id] = ai.trend_summary(track, matches)
 
+    daily_brief = ai.daily_brief(tracks, matches_by_track, trends_by_track)
     repository.upsert_matches(db_match_records)
     generated_at = datetime.now(timezone.utc)
     report = build_report(
@@ -386,6 +387,7 @@ def _process_digest(
         relevance_threshold=settings.report_relevance_threshold,
         show_scores=settings.report_show_scores,
         timezone_name=timezone_name,
+        daily_brief=daily_brief,
     )
     suffix = beta_user.id[:8] if beta_user else ""
     path = write_report(report, suffix=suffix)

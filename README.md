@@ -38,6 +38,7 @@ GitHub Actions digest (daily)
   -> optional embeddings + candidate retrieval
   -> compatible Chat API relevance reranking + prior feedback
   -> top-item analysis + trend summary
+  -> three-line cross-signal editorial brief
   -> private Supabase matches/analyses/per-user digest
   -> one private email per invitee
   -> signed feedback page + Supabase Edge Function
@@ -51,7 +52,8 @@ The tracker has three **roles**, not necessarily three different LLMs:
 1. `EMBEDDING_MODEL` converts Tracks and items into vectors. It is an embedding
    model, not a chat LLM.
 2. `RANKING_MODEL` scores candidate relevance and explains the score.
-3. `ANALYSIS_MODEL` writes deeper analyses and trend syntheses.
+3. `ANALYSIS_MODEL` writes deeper analyses, trend syntheses, and the three-line
+   cross-signal editorial brief at the top of each digest.
 
 The ranking and analysis roles may use the same model. Embeddings can come from
 a different provider. For example, DeepSeek can handle ranking/analysis while
@@ -143,7 +145,7 @@ Variables are not secrets; they only select endpoints and models.
 | `REPORT_HIGHLIGHT_ITEMS` | `3` detailed highlights per Track |
 | `REPORT_QUICK_ITEMS` | `12` one-line related signals per Track |
 | `REPORT_RELEVANCE_THRESHOLD` | `50` |
-| `REPORT_SHOW_SCORES` | `false`; use reader-friendly relevance labels |
+| `REPORT_SHOW_SCORES` | `false`; keep model relevance scores internal by default |
 | `FORCE_DIGEST` | leave `false`; manual recovery only |
 | `BETA_MAX_USERS` | `20`; intentional safety/cost cap |
 | `BETA_MAX_TRACKS_PER_USER` | `3`; per-user cost cap |
