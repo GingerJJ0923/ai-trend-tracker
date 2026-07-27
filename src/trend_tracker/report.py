@@ -217,7 +217,7 @@ def _inline_markdown(value: str) -> str:
     return re.sub(r"`([^`]+)`", r"<code>\1</code>", rendered)
 
 
-def _digest_stats(value: str) -> str:
+def _signal_pipeline(value: str) -> str:
     match = re.fullmatch(
         r"今日扫描 \*\*(\d+)\*\* 条信息 · 发现相关 \*\*(\d+)\*\* 条 · "
         r"重点解读 \*\*(\d+)\*\* 条 · 深度分析 \*\*(\d+)\*\* 条",
@@ -225,24 +225,36 @@ def _digest_stats(value: str) -> str:
     )
     if not match:
         return '<div class="meta">{0}</div>'.format(_inline_markdown(value))
-    metrics = (
-        ("今日扫描", match.group(1), "条信息"),
-        ("相关信号", match.group(2), "条"),
-        ("重点解读", match.group(3), "条"),
-        ("深度分析", match.group(4), "条"),
+    stages = (
+        ("扫描", match.group(1), "stage-raw"),
+        ("相关", match.group(2), "stage-related"),
+        ("重点", match.group(3), "stage-priority"),
+        ("深度", match.group(4), "stage-depth"),
     )
     cells = []
-    for label, number, unit in metrics:
+    for index, (label, number, class_name) in enumerate(stages):
+        if index:
+            cells.append(
+                '<td class="pipeline-connector" aria-hidden="true">›</td>'
+            )
         cells.append(
-            '<td class="metric-cell" width="25%">'
-            '<span class="metric-label">{0}</span>'
-            '<strong class="metric-value">{1}</strong>'
-            '<span class="metric-unit">{2}</span>'
-            "</td>".format(label, number, unit)
+            '<td class="pipeline-stage {0}">'
+            '<span class="pipeline-label">{1}</span>'
+            '<strong class="pipeline-value">{2}</strong>'
+            '<span class="pipeline-unit">条</span>'
+            "</td>".format(class_name, label, number)
         )
     return (
-        '<table role="presentation" class="digest-stats" width="100%">'
-        "<tr>{0}</tr></table>".format("".join(cells))
+        '<table role="presentation" class="signal-pipeline" width="100%">'
+        '<tr><td class="pipeline-title" colspan="7">'
+        '<span>今日信号压缩</span>'
+        '<span class="pipeline-status"><i></i> 已完成</span>'
+        "</td></tr>"
+        "<tr>{0}</tr>"
+        '<tr><td class="pipeline-track-cell" colspan="7">'
+        '<span class="pipeline-track"><i></i></span>'
+        "</td></tr>"
+        "</table>".format("".join(cells))
     )
 
 
@@ -371,7 +383,7 @@ def markdown_email_html(report: str) -> str:
         elif line.startswith("> "):
             meta_value = line[2:]
             if meta_count == 0:
-                blocks.append(_digest_stats(meta_value))
+                blocks.append(_signal_pipeline(meta_value))
             elif card_open:
                 blocks.append(
                     '<div class="meta feedback-bar">{0}</div>'.format(
@@ -410,19 +422,21 @@ body,table,td,p,a,li,h1,h2,h3,h4{-webkit-text-size-adjust:100%;-ms-text-size-adj
 table{border-collapse:separate;border-spacing:0}a{color:#67d8f3;text-decoration:none;font-weight:650}a:hover{color:#a8ecfa}strong{color:#f3f8fb}code{padding:2px 5px;border:1px solid #1b3a4e;border-radius:4px;background:#071622;color:#86dff3;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .email-shell{width:100%;background:#040912}.email-outer{padding:34px 14px 48px}.email-container{width:100%;max-width:700px;background:#07131f;border:1px solid #173348;border-radius:18px;overflow:hidden;box-shadow:0 28px 90px rgba(0,0,0,.4)}
 .brand-bar{padding:20px 28px 15px;border-bottom:1px solid #173348;background:#050e18}.brand-row{width:100%}.brand-identity{white-space:nowrap}.brand-orbit{display:inline-block;width:22px;height:22px;margin-right:10px;border:1px solid #2c7892;border-radius:50%;box-shadow:inset 0 0 10px rgba(103,216,243,.1);vertical-align:middle;text-align:center}.brand-mark{display:inline-block;width:6px;height:6px;margin-top:7px;border-radius:50%;background:#67d8f3;box-shadow:0 0 12px #67d8f3}.brand-name{color:#a5eafa;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;font-weight:800;letter-spacing:.17em;vertical-align:middle}.brand-note{color:#607a8d;font-size:10px;font-weight:500;letter-spacing:.04em}
-.signal-spectrum{height:18px;margin-top:13px;overflow:hidden;white-space:nowrap}.signal-spectrum span{display:inline-block;height:1px;margin-right:4px;background:#17384d;vertical-align:middle}.signal-spectrum .quiet{width:12%;}.signal-spectrum .short{width:5%;background:#25627c}.signal-spectrum .pulse{width:2px;height:11px;background:#67d8f3;box-shadow:0 0 8px rgba(103,216,243,.65)}.signal-spectrum .medium{width:18%;background:#20546d}.signal-spectrum .long{width:31%}.signal-spectrum .beacon{width:4px;height:4px;border-radius:50%;background:#8be5f6;box-shadow:0 0 8px rgba(103,216,243,.45)}
+.signal-spectrum{position:relative;height:18px;margin-top:13px;overflow:hidden;white-space:nowrap}.signal-spectrum span{display:inline-block;height:1px;margin-right:4px;background:#17384d;vertical-align:middle}.signal-spectrum .quiet{width:12%;}.signal-spectrum .short{width:5%;background:#25627c}.signal-spectrum .pulse{width:2px;height:11px;background:#67d8f3;box-shadow:0 0 8px rgba(103,216,243,.65)}.signal-spectrum .medium{width:18%;background:#20546d}.signal-spectrum .long{width:31%}.signal-spectrum .beacon{width:4px;height:4px;border-radius:50%;background:#8be5f6;box-shadow:0 0 8px rgba(103,216,243,.45)}.signal-spectrum .spectrum-scan{position:absolute;right:0;top:8px;width:18%!important;height:2px!important;margin:0!important;background:linear-gradient(90deg,rgba(103,216,243,0),#67d8f3 62%,#d9f8ff)!important;box-shadow:0 0 10px rgba(103,216,243,.72);opacity:.55;animation:signal-scan 9s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes signal-scan{0%,14%{transform:translateX(-455%);opacity:0}20%{opacity:.32}63%{transform:translateX(0);opacity:.88}72%,100%{transform:translateX(0);opacity:.34}}
 .email-content{padding:0 32px 28px;color:#93a9b8;font-size:14px;line-height:1.78;mso-line-height-rule:exactly}.digest-hero{margin:0 -32px;padding:30px 32px 22px;border-bottom:1px solid #142f42;background:#081724}
 h1{margin:0 0 19px;color:#f4f8fa;font-family:"Avenir Next","SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;font-size:29px;font-weight:650;line-height:1.32;letter-spacing:-.035em}h2{margin:2px 0 18px;color:#edf5f8;font-family:"Avenir Next","SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;font-size:21px;font-weight:650;line-height:1.4;letter-spacing:-.025em}h3{margin:25px 0 12px;color:#9ddfeb;font-size:15px;font-weight:650;line-height:1.45}h4{display:inline;margin:0;color:#eff6f9;font-size:16px;font-weight:650;line-height:1.52}
 p{margin:9px 0;color:#91a7b6}.content-section{margin:34px 0 0;padding-top:29px;border-top:1px solid #173348}
-.digest-stats{margin:0 0 15px;border:1px solid #19384d;border-radius:10px;background:#07131f}.metric-cell{padding:12px 10px;border-right:1px solid #173348;text-align:center}.metric-cell:last-child{border-right:0}.metric-label{display:block;color:#5f7d90;font-size:9px}.metric-value{display:inline-block;margin-top:3px;color:#dff6fb;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:17px;font-weight:700}.metric-unit{margin-left:3px;color:#4f6c7e;font-size:8px}
+.signal-pipeline{margin:0 0 15px;border:1px solid #19384d;border-radius:10px;background:#07131f}.pipeline-title{padding:10px 12px 7px;color:#58768a;font-size:9px;font-weight:650;letter-spacing:.08em}.pipeline-status{float:right;color:#5b817d;font-weight:500;letter-spacing:0}.pipeline-status i{display:inline-block;width:5px;height:5px;margin-right:5px;border-radius:50%;background:#72cdb9;box-shadow:0 0 7px rgba(114,205,185,.45)}.pipeline-stage{width:19%;padding:5px 5px 8px;text-align:center;white-space:nowrap}.pipeline-label{display:block;color:#5f7d90;font-size:9px}.pipeline-value{display:inline-block;margin-top:1px;color:#9db1be;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:18px;font-weight:700}.pipeline-unit{margin-left:2px;color:#4f6c7e;font-size:8px}.pipeline-connector{width:8%;padding:4px 0 0;color:#29536a;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;text-align:center}.stage-related .pipeline-value{color:#b9cbd4}.stage-priority .pipeline-value{color:#dff6fb}.stage-depth .pipeline-value{color:#67d8f3;text-shadow:0 0 12px rgba(103,216,243,.18)}.pipeline-track-cell{padding:0 12px 11px}.pipeline-track{display:block;position:relative;height:2px;overflow:hidden;border-radius:2px;background:#142f40}.pipeline-track i{display:block;width:100%;height:2px;background:linear-gradient(90deg,#24485c 0%,#326f86 42%,#67d8f3 100%);opacity:.6}
 .meta{margin:12px 0 16px;padding:12px 14px;border:1px solid #19384d;border-radius:9px;background:#091a28;color:#718b9d;font-size:11px}.digest-nav{margin:0;padding:0;border:0;background:transparent;text-align:left}.digest-nav a{display:inline-block;margin:3px 6px 3px 0;padding:6px 10px;border:1px solid #1c4157;border-radius:7px;background:#0a1c2b;color:#79d9ee;font-size:10px;white-space:nowrap}
 .section-conclusion{position:relative;margin:28px 0 0;padding:23px 23px 19px;border:1px solid #244354;border-left:3px solid #67d8f3;border-radius:11px;background:#0a1b29}.section-conclusion h2{margin-bottom:13px;color:#dff6fb}.section-conclusion ul{margin-bottom:0}.section-conclusion li{padding:8px 0;border-bottom:1px solid #173447}.section-conclusion li:last-child{border-bottom:0}.section-conclusion .action-row{margin-top:3px;padding:10px 12px;border:1px solid #614a2f;border-radius:7px;background:#1a1817;color:#d8c3a8}.section-conclusion .action-row strong{color:#f2bf7d}
 .signal-card{margin:12px 0 18px;padding:20px 20px 18px;border:1px solid #17384d;border-radius:11px;background:#091824}.signal-heading{display:flex;align-items:flex-start;gap:10px;margin-bottom:13px}.signal-index{flex:0 0 auto;padding-top:2px;color:#4f8ba3;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}.signal-heading h4{flex:1}.signal-heading h4 a{color:#f0f6f8}.signal-tier{flex:0 0 auto;margin-top:2px;padding:3px 7px;border:1px solid #29576b;border-radius:999px;background:#0b2230;color:#7fd9ec;font-size:9px;white-space:nowrap}.signal-card ul{margin-top:9px}.signal-card li{padding:4px 0}.signal-card .action-row{margin:3px 0;padding:6px 9px;border-left:2px solid #b78350;color:#c4b49f}.signal-card .action-row strong{color:#e8b875}.signal-card .feedback-bar{margin:15px 0 0;border-color:#253f4c;background:#071723;color:#607c8e}.feedback-bar a{display:inline-block;margin:4px 4px 2px 0;padding:5px 9px;border:1px solid #254c5d;border-radius:6px;background:#0a202d;color:#79d9ed;font-size:10px}.feedback-bar a:last-child{border-color:#5b472f;background:#191714;color:#efb36b}
 ul{margin:8px 0 15px;padding:0 0 0 19px}li{margin:5px 0;color:#94aab9}.section-trends h3{color:#8fd9e8}.section-trends p{margin:8px 0 14px;padding:15px 16px;border-left:2px solid #376f86;background:#081824;color:#9bb0bd}.section-trends strong{color:#87dded}.section-related ul{margin-top:5px;padding-left:0;list-style:none}.section-related li{margin:0;padding:11px 0;border-bottom:1px solid #142d3e}.section-related li:last-child{border-bottom:0}.section-related li a{color:#c9e5eb}
 .email-footer{height:12px;border-top:1px solid #132d3e;background:#050e18}
 @media only screen and (max-width:600px){
-.email-outer{padding:0!important}.email-container{border-right:0!important;border-left:0!important;border-radius:0!important}.brand-bar{padding:16px 18px 13px!important}.brand-note{display:none!important}.email-content{padding:0 18px 20px!important;font-size:14px!important}.digest-hero{margin:0 -18px!important;padding:25px 18px 20px!important}.metric-cell{display:inline-block!important;width:50%!important;box-sizing:border-box!important;border-bottom:1px solid #173348!important}.section-conclusion{padding:20px 16px 17px!important}.signal-card{padding:17px 15px 15px!important}.signal-heading{display:block!important}.signal-index{display:inline-block!important;margin-right:8px!important}.signal-tier{display:inline-block!important;margin:9px 0 0!important}h1{font-size:24px!important}h2{font-size:19px!important}h4{font-size:15px!important}.digest-nav a,.feedback-bar a{padding:6px 9px!important}
+.email-outer{padding:0!important}.email-container{border-right:0!important;border-left:0!important;border-radius:0!important}.brand-bar{padding:16px 18px 13px!important}.brand-note{display:none!important}.email-content{padding:0 18px 20px!important;font-size:14px!important}.digest-hero{margin:0 -18px!important;padding:25px 18px 20px!important}.pipeline-stage{padding-right:2px!important;padding-left:2px!important}.pipeline-value{font-size:16px!important}.pipeline-connector{width:6%!important;font-size:13px!important}.section-conclusion{padding:20px 16px 17px!important}.signal-card{padding:17px 15px 15px!important}.signal-heading{display:block!important}.signal-index{display:inline-block!important;margin-right:8px!important}.signal-tier{display:inline-block!important;margin:9px 0 0!important}h1{font-size:24px!important}h2{font-size:19px!important}h4{font-size:15px!important}.digest-nav a,.feedback-bar a{padding:6px 9px!important}
 }
+@media (prefers-reduced-motion:reduce){.spectrum-scan{animation:none!important;transform:none!important;opacity:.45!important}}
 </style>
 </head>
 <body style="margin:0;padding:0;background:#040912;color:#e7f1f6">
@@ -434,7 +448,7 @@ ul{margin:8px 0 15px;padding:0 0 0 19px}li{margin:5px 0;color:#94aab9}.section-t
 <td class="brand-identity"><span class="brand-orbit"><span class="brand-mark"></span></span><span class="brand-name">SIGNAL RADAR</span></td>
 <td align="right"><span class="brand-note">每日个性化 AI 情报</span></td>
 </tr></table>
-<div class="signal-spectrum" aria-hidden="true"><span class="quiet"></span><span class="short"></span><span class="pulse"></span><span class="medium"></span><span class="beacon"></span><span class="short"></span><span class="pulse"></span><span class="long"></span></div>
+<div class="signal-spectrum" aria-hidden="true"><span class="quiet"></span><span class="short"></span><span class="pulse"></span><span class="medium"></span><span class="beacon"></span><span class="short"></span><span class="pulse"></span><span class="long"></span><span class="spectrum-scan"></span></div>
 </td></tr>
 <tr><td class="email-content" style="padding:0 32px 28px;color:#93a9b8;font-size:14px;line-height:1.78">__DIGEST_CONTENT__</td></tr>
 <tr><td class="email-footer" height="12" style="height:12px;border-top:1px solid #132d3e;background:#050e18">&nbsp;</td></tr>
