@@ -151,6 +151,20 @@ Variables are not secrets; they only select endpoints and models.
 | `BETA_MAX_TRACKS_PER_USER` | `3`; per-user cost cap |
 | `FEEDBACK_PAGE_URL` | GitHub Pages URL ending in `/feedback.html` |
 | `FEEDBACK_API_URL` | Supabase URL ending in `/functions/v1/feedback` |
+| `DIGEST_ASSET_BASE_URL` | Optional public CDN/bucket directory for email GIF/PNG assets; public GitHub Actions runs derive an immutable URL automatically |
+
+The email's motion assets are public, generic visual files and contain no user
+data. In this public repository, GitHub Actions automatically points each email
+at the exact commit that generated it, so no extra variable is required. If the
+repository becomes private, upload `assets/email/` to a public Supabase Storage
+bucket or CDN and set `DIGEST_ASSET_BASE_URL` to that directory.
+
+The committed GIFs total about 1.1 MB and are loaded remotely, so they do
+not count toward Gmail's HTML clipping threshold. Their first frames are complete
+static compositions. Outlook receives the PNG versions explicitly, and clients
+honoring reduced-motion preferences also switch to PNG. To redesign the motion
+assets, install Pillow locally and run `python scripts/generate_email_motion.py`;
+GitHub Actions does not need Pillow because it sends the committed files.
 
 Example private `TRACKS_JSON`:
 

@@ -120,6 +120,9 @@ jobs:
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}
+          # Optional public CDN override. When empty, public GitHub repositories
+          # automatically use immutable assets from the current commit SHA.
+          DIGEST_ASSET_BASE_URL: ${{ vars.DIGEST_ASSET_BASE_URL }}
           LOOKBACK_HOURS: "30"
           OUTPUT_LANGUAGE: "zh-CN"
           REPORT_TIMEZONE: "Asia/Shanghai"

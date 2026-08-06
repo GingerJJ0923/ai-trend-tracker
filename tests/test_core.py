@@ -523,6 +523,36 @@ class ConfigTests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old)
 
+    def test_derives_immutable_email_asset_url_in_github_actions(self):
+        old = os.environ.copy()
+        try:
+            os.environ.pop("DIGEST_ASSET_BASE_URL", None)
+            os.environ["GITHUB_REPOSITORY"] = "example/ai-trend-tracker"
+            os.environ["GITHUB_SHA"] = "abc123"
+            settings = Settings.from_env()
+            self.assertEqual(
+                settings.digest_asset_base_url,
+                "https://raw.githubusercontent.com/example/ai-trend-tracker/abc123/assets/email",
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_explicit_email_asset_url_overrides_github_default(self):
+        old = os.environ.copy()
+        try:
+            os.environ["DIGEST_ASSET_BASE_URL"] = "https://cdn.example.com/radar/"
+            os.environ["GITHUB_REPOSITORY"] = "example/ai-trend-tracker"
+            os.environ["GITHUB_SHA"] = "abc123"
+            settings = Settings.from_env()
+            self.assertEqual(
+                settings.digest_asset_base_url,
+                "https://cdn.example.com/radar",
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
     def test_parses_invite_only_beta_users(self):
         old = os.environ.copy()
         try:
@@ -944,6 +974,27 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("您始终先看一步", rendered)
         self.assertIn("@keyframes horizon-sweep", rendered)
 
+    def test_email_html_uses_remote_motion_with_static_fallbacks(self):
+        rendered = markdown_email_html(
+            "# AI 趋势日报\n\n## 趋势雷达\n\n- **趋势判断：** Agent 正在走向落地",
+            "https://cdn.example.com/email?a=1&b=2",
+        )
+        self.assertIn(
+            'src="https://cdn.example.com/email?a=1&amp;b=2/signal-spectrum.gif"',
+            rendered,
+        )
+        self.assertIn("trend-radar.gif", rendered)
+        self.assertIn("radar-horizon.gif", rendered)
+        self.assertIn("signal-spectrum-static.png", rendered)
+        self.assertIn("trend-radar-static.png", rendered)
+        self.assertIn("radar-horizon-static.png", rendered)
+        self.assertIn("<!--[if mso]>", rendered)
+        self.assertIn('class="motion-gif"', rendered)
+        self.assertIn('class="motion-static"', rendered)
+        self.assertIn("prefers-reduced-motion:reduce", rendered)
+        self.assertIn("Agent 正在走向落地", rendered)
+        self.assertLess(len(rendered.encode("utf-8")), 80 * 1024)
+
     def test_email_html_renders_related_signals_as_observation_log(self):
         rendered = markdown_email_html(
             "## 其他相关信号\n\n"
@@ -1053,8 +1104,17 @@ class DeliveryTests(unittest.TestCase):
 
     def test_sends_one_email_to_multiple_recipients(self):
         http = DeliveryHttp()
-        send_email(http, "re_key", "Digest <digest@example.com>", "personal@qq.com,work@example.com", "Daily", "Report")
+        send_email(
+            http,
+            "re_key",
+            "Digest <digest@example.com>",
+            "personal@qq.com,work@example.com",
+            "Daily",
+            "Report",
+            "https://cdn.example.com/email",
+        )
         self.assertEqual(http.json_calls[0][1]["to"], ["personal@qq.com", "work@example.com"])
+        self.assertIn("signal-spectrum.gif", http.json_calls[0][1]["html"])
 
     def test_sends_markdown_report_to_serverchan(self):
         http = DeliveryHttp()

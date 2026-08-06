@@ -22,6 +22,8 @@ SOURCE_DISPLAY_NAMES = {
     "arxiv-ai": "arXiv",
 }
 
+EMAIL_HTML_WARNING_BYTES = 80 * 1024
+
 
 def _source_display_name(source_key: str) -> str:
     return SOURCE_DISPLAY_NAMES.get(
@@ -333,7 +335,81 @@ def _brief_item(value: str) -> str:
     return ""
 
 
-def _trend_orbit_map() -> str:
+def _email_asset_url(base_url: str, filename: str) -> str:
+    if not base_url:
+        return ""
+    return html.escape(
+        "{0}/{1}".format(base_url.rstrip("/"), filename),
+        quote=True,
+    )
+
+
+def _motion_asset(
+    base_url: str,
+    name: str,
+    width: int,
+    height: int,
+    class_name: str,
+) -> str:
+    """Return an animated image with Outlook and reduced-motion fallbacks."""
+    gif_url = _email_asset_url(base_url, "{0}.gif".format(name))
+    png_url = _email_asset_url(base_url, "{0}-static.png".format(name))
+    if not gif_url:
+        return ""
+    image_style = (
+        "display:block;width:100%;max-width:{0}px;height:auto;border:0;"
+        "outline:none;text-decoration:none"
+    ).format(width)
+    return (
+        '<div class="motion-asset {0}" aria-hidden="true">'
+        '<!--[if mso]><img src="{1}" width="{2}" height="{3}" alt="" '
+        'style="{4}"><![endif]-->'
+        '<!--[if !mso]><!-->'
+        '<img class="motion-gif" src="{5}" width="{2}" height="{3}" alt="" '
+        'role="presentation" style="{4}">'
+        '<img class="motion-static" src="{1}" width="{2}" height="{3}" alt="" '
+        'role="presentation" style="display:none;width:100%;max-width:{2}px;'
+        'height:auto;border:0;outline:none;text-decoration:none">'
+        '<!--<![endif]-->'
+        "</div>"
+    ).format(class_name, png_url, width, height, image_style, gif_url)
+
+
+def _signal_spectrum(asset_base_url: str = "") -> str:
+    motion = _motion_asset(
+        asset_base_url,
+        "signal-spectrum",
+        640,
+        20,
+        "signal-spectrum-motion",
+    )
+    if motion:
+        return motion
+    return (
+        '<div class="signal-spectrum" aria-hidden="true">'
+        '<span class="quiet"></span><span class="short"></span>'
+        '<span class="pulse"></span><span class="medium"></span>'
+        '<span class="beacon"></span><span class="short"></span>'
+        '<span class="pulse"></span><span class="long"></span>'
+        '<span class="spectrum-scan"></span></div>'
+    )
+
+
+def _trend_orbit_map(asset_base_url: str = "") -> str:
+    motion = _motion_asset(
+        asset_base_url,
+        "trend-radar",
+        600,
+        180,
+        "trend-radar-motion",
+    )
+    if motion:
+        return (
+            '<div class="trend-orbit-map">{0}'
+            '<div class="trend-map-caption"><span>趋势坐标已建立</span>'
+            '<span class="map-live"><i></i> 动态观测</span></div>'
+            "</div>"
+        ).format(motion)
     return (
         '<div class="trend-orbit-map">'
         '<div class="trend-map-visual" aria-hidden="true">'
@@ -351,7 +427,22 @@ def _trend_orbit_map() -> str:
     )
 
 
-def _radar_horizon() -> str:
+def _radar_horizon(asset_base_url: str = "") -> str:
+    motion = _motion_asset(
+        asset_base_url,
+        "radar-horizon",
+        600,
+        122,
+        "radar-horizon-motion",
+    )
+    if motion:
+        return (
+            '<div class="radar-horizon">{0}'
+            '<div class="horizon-promise">世界持续加速，'
+            "<strong>您始终先看一步</strong></div>"
+            '<div class="horizon-status"><i></i>持续扫描中 · 等待下一次发现</div>'
+            "</div>"
+        ).format(motion)
     return (
         '<div class="radar-horizon">'
         '<div class="horizon-visual" aria-hidden="true">'
@@ -371,7 +462,7 @@ def _radar_horizon() -> str:
     )
 
 
-def markdown_email_html(report: str) -> str:
+def markdown_email_html(report: str, asset_base_url: str = "") -> str:
     """Render the digest as an immersive, email-safe night observatory UI."""
     blocks = []
     list_open = False
@@ -496,7 +587,7 @@ def markdown_email_html(report: str) -> str:
             id_attribute = ' id="{0}"'.format(section_id) if section_id else ""
             blocks.append("<h2{0}>{1}</h2>".format(id_attribute, _inline_markdown(title)))
             if title == "趋势雷达":
-                blocks.append(_trend_orbit_map())
+                blocks.append(_trend_orbit_map(asset_base_url))
             elif title == "其他相关信号":
                 blocks.append(
                     '<p class="related-whisper">'
@@ -592,11 +683,12 @@ ul{margin:8px 0 15px;padding:0 0 0 19px}li{margin:5px 0;color:#94aab9}
 .section-related{position:relative;overflow:hidden}.section-related h3{position:relative;z-index:2}.related-whisper{position:relative;z-index:2;margin:-10px 0 19px;padding-left:10px;border-left:1px solid #315d72;color:#698696;font-size:11px;line-height:1.55;letter-spacing:.025em}.log-scanner{position:absolute;top:91px;left:0;z-index:1;width:100%;height:1px;background:linear-gradient(90deg,rgba(103,216,243,0),rgba(103,216,243,.62),rgba(113,136,255,.25),rgba(103,216,243,0));box-shadow:0 0 12px rgba(103,216,243,.3);opacity:.36;animation:log-scan 15s cubic-bezier(.4,0,.2,1) infinite}.signal-log{position:relative;z-index:2;margin:5px 0 18px!important;padding:0!important;list-style:none}.related-signal-row{display:block;margin:0!important;padding:12px 4px!important;border-bottom:1px solid #142d3e!important;color:#8fa7b6}.related-signal-row:last-child{border-bottom:0!important}.log-index{display:inline-block;width:25px;color:#41687d;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:9px;vertical-align:middle}.log-wave{display:inline-block;position:relative;width:46px;height:10px;margin-right:8px;vertical-align:middle}.log-wave i{display:block;position:absolute;top:5px;left:0;height:1px;background:linear-gradient(90deg,#24566d,#67d8f3);box-shadow:0 0 6px rgba(103,216,243,.28)}.log-wave b{display:block;position:absolute;top:3px;width:5px;height:5px;border:1px solid #67d8f3;border-radius:50%;box-shadow:0 0 7px rgba(103,216,243,.35)}.wave-short .log-wave i{width:18px}.wave-short .log-wave b{left:18px}.wave-medium .log-wave i{width:29px}.wave-medium .log-wave b{left:29px}.wave-long .log-wave i{width:40px;background:linear-gradient(90deg,#315f71,#7188ff)}.wave-long .log-wave b{left:40px;border-color:#7188ff;box-shadow:0 0 8px rgba(113,136,255,.48)}.log-copy{vertical-align:middle}.log-copy a{color:#c9e5eb}
 .email-footer{overflow:hidden;padding:0 28px 17px;border-top:1px solid #132d3e;background:#050e18}.radar-horizon{overflow:hidden}.horizon-visual{position:relative;height:122px;overflow:hidden}.horizon-arc{position:absolute;left:50%;border:1px solid rgba(57,115,140,.44);border-radius:50%;transform:translateX(-50%)}.arc-outer{bottom:-105px;width:420px;height:210px}.arc-middle{bottom:-75px;width:300px;height:150px;border-color:rgba(74,137,162,.4)}.arc-inner{bottom:-45px;width:180px;height:90px;border-color:rgba(101,119,200,.42)}.horizon-axis{position:absolute;bottom:0;left:8%;width:84%;height:1px;background:linear-gradient(90deg,rgba(103,216,243,0),rgba(103,216,243,.36),rgba(103,216,243,0))}.horizon-sweep{position:absolute;bottom:0;left:50%;width:170px;height:1px;transform:rotate(-35deg);transform-origin:left center;background:linear-gradient(90deg,#d8f8ff,rgba(103,216,243,.12),rgba(103,216,243,0));box-shadow:0 0 9px rgba(103,216,243,.45);animation:horizon-sweep 18s cubic-bezier(.4,0,.2,1) infinite}.horizon-beacon{position:absolute;width:6px;height:6px;border-radius:50%;background:#67d8f3;box-shadow:0 0 7px #67d8f3,0 0 16px rgba(103,216,243,.64)}.beacon-a{top:42px;left:31%;animation:horizon-beacon 7s ease-in-out infinite}.beacon-b{top:72px;left:70%;background:#7188ff;box-shadow:0 0 8px #7188ff,0 0 18px rgba(113,136,255,.58);animation:horizon-beacon 7s ease-in-out 2.4s infinite}.horizon-center{position:absolute;bottom:-4px;left:50%;width:9px;height:9px;margin-left:-5px;border:1px solid #8be5f6;border-radius:50%;background:#0a2130;box-shadow:0 0 14px rgba(103,216,243,.7)}.horizon-promise{text-align:center;color:#7895a3;font-size:12px;line-height:1.55;letter-spacing:.025em}.horizon-promise strong{color:#b3d5dd;font-weight:650}.horizon-status{margin-top:5px;text-align:center;color:#557889;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:8px;letter-spacing:.08em}.horizon-status i{display:inline-block;width:5px;height:5px;margin-right:6px;border-radius:50%;background:#67d8f3;box-shadow:0 0 8px rgba(103,216,243,.62);animation:map-core-pulse 3.8s ease-in-out infinite}
 @keyframes map-core-pulse{0%,100%{opacity:.48;transform:scale(.82)}50%{opacity:1;transform:scale(1.22)}}@keyframes probe-orbit{from{transform:rotate(18deg)}to{transform:rotate(378deg)}}@keyframes uncertain-drift{0%,100%{transform:translate(-3px,1px);opacity:.58}50%{transform:translate(5px,-4px);opacity:1}}@keyframes log-scan{0%,18%{transform:translateY(-55px);opacity:0}28%{opacity:.48}82%{opacity:.3}100%{transform:translateY(520px);opacity:0}}@keyframes horizon-sweep{0%,18%{transform:rotate(-165deg);opacity:0}28%{opacity:.68}82%{opacity:.5}100%{transform:rotate(-15deg);opacity:0}}@keyframes horizon-beacon{0%,72%,100%{opacity:.18;transform:scale(.7)}78%{opacity:1;transform:scale(1.42)}86%{opacity:.38;transform:scale(.9)}}
+.motion-asset{width:100%;overflow:hidden}.motion-asset img{margin:0 auto}.motion-gif{display:block}.motion-static{display:none}.signal-spectrum-motion{margin-top:12px}.trend-radar-motion{margin:8px auto 0}.radar-horizon-motion{margin:-4px auto -18px}
 @media only screen and (max-width:600px){
 .email-outer{padding:0!important}.email-container{border-right:0!important;border-left:0!important;border-radius:0!important}.brand-bar{padding:16px 18px 13px!important}.brand-note{display:none!important}.email-content{padding:0 18px 20px!important;font-size:14px!important}.digest-hero{margin:0 -18px!important;padding:25px 18px 20px!important}.pipeline-stage{padding-right:2px!important;padding-left:2px!important}.pipeline-value{font-size:16px!important}.pipeline-connector{width:6%!important;font-size:13px!important}.section-conclusion{padding:20px 16px 14px!important}.brief-glyph-cell{width:43px!important}.brief-text{font-size:12px!important}.signal-card{padding:17px 15px 15px!important}.signal-heading{display:block!important}.signal-index{display:inline-block!important;margin-right:8px!important}.trend-map-visual{height:168px!important}.orbit-a{width:220px!important;margin-left:-110px!important}.orbit-b{width:150px!important;margin-left:-75px!important}.node-confirmed{left:65%!important}.node-uncertain{left:14%!important}.node-watch{left:68%!important}.probe-arm{width:82px!important}.log-wave{width:37px!important;margin-right:5px!important}.wave-long .log-wave i{width:31px!important}.wave-long .log-wave b{left:31px!important}.email-footer{padding-right:14px!important;padding-left:14px!important}.arc-outer{width:330px!important;height:166px!important;bottom:-83px!important}.arc-middle{width:240px!important;height:120px!important;bottom:-60px!important}.arc-inner{width:150px!important;height:76px!important;bottom:-38px!important}h1{font-size:24px!important}h2{font-size:19px!important}h4{font-size:15px!important}.digest-nav a,.feedback-bar a{padding:6px 9px!important}
 }
 @media only screen and (min-width:821px){.telemetry-rail{display:table-cell!important}}
-@media (prefers-reduced-motion:reduce){.spectrum-scan,.rail-particle,.signal-packet,.output-ring,.signal-flare,.brief-glyph,.brief-glyph *,.premium-analysis-badge i,.map-core i,.probe-arm,.node-uncertain,.map-live i,.log-scanner,.horizon-sweep,.horizon-beacon,.horizon-status i{animation:none!important}.spectrum-scan{opacity:.45!important}.rail-particle{opacity:.34!important}.signal-packet{opacity:.58!important}.brief-signal .brief-glyph em{opacity:.42!important}.brief-action .brief-glyph b{opacity:.85!important}.premium-analysis-badge i{opacity:.8!important}.log-scanner{opacity:.22!important}.horizon-sweep{opacity:.42!important}}
+@media (prefers-reduced-motion:reduce){.motion-gif{display:none!important}.motion-static{display:block!important}.spectrum-scan,.rail-particle,.signal-packet,.output-ring,.signal-flare,.brief-glyph,.brief-glyph *,.premium-analysis-badge i,.map-core i,.probe-arm,.node-uncertain,.map-live i,.log-scanner,.horizon-sweep,.horizon-beacon,.horizon-status i{animation:none!important}.spectrum-scan{opacity:.45!important}.rail-particle{opacity:.34!important}.signal-packet{opacity:.58!important}.brief-signal .brief-glyph em{opacity:.42!important}.brief-action .brief-glyph b{opacity:.85!important}.premium-analysis-badge i{opacity:.8!important}.log-scanner{opacity:.22!important}.horizon-sweep{opacity:.42!important}}
 </style>
 </head>
 <body style="margin:0;padding:0;background:#040912;color:#e7f1f6">
@@ -613,7 +705,7 @@ ul{margin:8px 0 15px;padding:0 0 0 19px}li{margin:5px 0;color:#94aab9}
 <td class="brand-identity"><span class="brand-orbit"><span class="brand-mark"></span></span><span class="brand-name">SIGNAL RADAR</span></td>
 <td align="right"><span class="brand-note">每日个性化 AI 情报</span></td>
 </tr></table>
-<div class="signal-spectrum" aria-hidden="true"><span class="quiet"></span><span class="short"></span><span class="pulse"></span><span class="medium"></span><span class="beacon"></span><span class="short"></span><span class="pulse"></span><span class="long"></span><span class="spectrum-scan"></span></div>
+__SIGNAL_SPECTRUM__
 </td></tr>
 <tr><td class="email-content" align="left" style="padding:0 32px 28px;text-align:left;color:#93a9b8;font-size:14px;line-height:1.78">__DIGEST_CONTENT__</td></tr>
 <tr><td class="email-footer" style="border-top:1px solid #132d3e;background:#050e18">__RADAR_HORIZON__</td></tr>
@@ -626,14 +718,39 @@ ul{margin:8px 0 15px;padding:0 0 0 19px}li{margin:5px 0;color:#94aab9}
 </td></tr>
 </table>
 </body>
-</html>""".replace("__DIGEST_CONTENT__", content).replace("__RADAR_HORIZON__", _radar_horizon())
+</html>""".replace("__DIGEST_CONTENT__", content).replace(
+        "__SIGNAL_SPECTRUM__",
+        _signal_spectrum(asset_base_url),
+    ).replace(
+        "__RADAR_HORIZON__",
+        _radar_horizon(asset_base_url),
+    )
 
 
-def send_email(http: HttpClient, api_key: str, sender: str, recipient: str, subject: str, report: str) -> None:
+def _warn_email_html_size(body: str) -> None:
+    size_bytes = len(body.encode("utf-8"))
+    if size_bytes > EMAIL_HTML_WARNING_BYTES:
+        print(
+            "WARNING: digest HTML is {0:.1f} KB; Gmail may clip messages near 102 KB.".format(
+                size_bytes / 1024
+            )
+        )
+
+
+def send_email(
+    http: HttpClient,
+    api_key: str,
+    sender: str,
+    recipient: str,
+    subject: str,
+    report: str,
+    asset_base_url: str = "",
+) -> None:
     recipients = email_recipients(recipient)
     if not (api_key and sender and recipients):
         return
-    body = markdown_email_html(report)
+    body = markdown_email_html(report, asset_base_url)
+    _warn_email_html_size(body)
     response = http.post_json(
         "https://api.resend.com/emails",
         {"from": sender, "to": recipients, "subject": subject, "html": body},
@@ -651,6 +768,7 @@ def send_smtp_email(
     recipient: str,
     subject: str,
     report: str,
+    asset_base_url: str = "",
 ) -> None:
     recipients = email_recipients(recipient)
     if not (host and port and username and password and recipients):
@@ -660,10 +778,9 @@ def send_smtp_email(
     message["To"] = ", ".join(recipients)
     message["Subject"] = subject
     message.set_content(report)
-    message.add_alternative(
-        markdown_email_html(report),
-        subtype="html",
-    )
+    body = markdown_email_html(report, asset_base_url)
+    _warn_email_html_size(body)
+    message.add_alternative(body, subtype="html")
     context = ssl.create_default_context()
     with smtplib.SMTP_SSL(host, port, context=context, timeout=60) as server:
         server.login(username, password)

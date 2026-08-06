@@ -201,6 +201,7 @@ class Settings:
     serverchan_sendkey: str
     digest_from: str
     digest_to: str
+    digest_asset_base_url: str
     source_config: str
     lookback_hours: int
     hn_item_limit: int
@@ -241,6 +242,17 @@ class Settings:
         analysis_model = os.environ.get("ANALYSIS_MODEL") or (
             "gpt-5-mini" if legacy_openai_key else ranking_model
         )
+        digest_asset_base_url = os.environ.get("DIGEST_ASSET_BASE_URL", "").rstrip("/")
+        if not digest_asset_base_url:
+            github_repository = os.environ.get("GITHUB_REPOSITORY", "").strip("/")
+            github_sha = os.environ.get("GITHUB_SHA", "").strip()
+            if github_repository and github_sha:
+                digest_asset_base_url = (
+                    "https://raw.githubusercontent.com/{0}/{1}/assets/email".format(
+                        github_repository,
+                        github_sha,
+                    )
+                )
         return cls(
             supabase_url=os.environ.get("SUPABASE_URL", "").rstrip("/"),
             supabase_key=(
@@ -260,6 +272,7 @@ class Settings:
             serverchan_sendkey=os.environ.get("SERVERCHAN_SENDKEY", ""),
             digest_from=os.environ.get("DIGEST_FROM", ""),
             digest_to=os.environ.get("DIGEST_TO", ""),
+            digest_asset_base_url=digest_asset_base_url,
             source_config=os.environ.get("SOURCE_CONFIG", "config/sources.json"),
             lookback_hours=env_int("LOOKBACK_HOURS", 30),
             hn_item_limit=env_int("HN_ITEM_LIMIT", 120),

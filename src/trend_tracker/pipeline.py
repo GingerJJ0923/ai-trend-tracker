@@ -216,6 +216,7 @@ def _deliver_report(
                 delivery_recipient,
                 subject,
                 report,
+                getattr(settings, "digest_asset_base_url", ""),
             )
         else:
             email_action = lambda: send_email(
@@ -225,6 +226,7 @@ def _deliver_report(
                 delivery_recipient,
                 subject,
                 report,
+                getattr(settings, "digest_asset_base_url", ""),
             )
         record("email", *_run_with_retries(email_action))
 
